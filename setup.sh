@@ -64,14 +64,54 @@ if ! git --version &>/dev/null; then
 fi
 info "git $(git --version | awk '{print $3}') ✓"
 
-# amplifier-agent (warn only — non-fatal)
-if amplifier-agent --version &>/dev/null 2>&1; then
-  AMPLIFIER_VERSION=$(amplifier-agent --version 2>&1 | head -1)
-  info "amplifier-agent $AMPLIFIER_VERSION ✓"
+# amplifier-agent — version-gated check (warn only — non-fatal so users can
+# still produce a built paperclip clone even without the engine on PATH).
+#
+# Required:    0.5.0+ (host_config layer + G3 fail-fast on headless approval)
+# Recommended: 0.5.1+ (hooks-approval default-mount removed — needed for
+#                       reliable delegation flows; before 0.5.1, sub-session
+#                       bash/curl calls auto-denied with "No approval
+#                       provider registered").
+#
+# Bump these when a new release ships. AMPLIFIER_TAG controls which ref
+# the recommended install command points at — use `main` until a release
+# tag exists, then switch to `vX.Y.Z` once tagged.
+AMPLIFIER_MIN_VERSION="0.5.0"
+AMPLIFIER_RECOMMENDED_VERSION="0.5.1"
+AMPLIFIER_TAG="main"
+
+# ver_lt A B  — returns 0 (true) when A < B by semver-ish ordering.
+# Uses sort -V which handles "0.5.0" < "0.5.1" < "0.5.10" correctly.
+ver_lt() {
+  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
+}
+
+if ! command -v amplifier-agent &>/dev/null; then
+  warn "amplifier-agent not found on PATH."
+  warn "The adapter requires amplifier-agent >= $AMPLIFIER_MIN_VERSION at runtime."
+  warn "Install:"
+  warn "  uv tool install git+https://github.com/microsoft/amplifier-agent@$AMPLIFIER_TAG"
 else
-  warn "amplifier-agent not found or not functional on PATH."
-  warn "The adapter requires amplifier-agent >= 0.5.0 at runtime."
-  warn "Install: uv tool install git+https://github.com/microsoft/amplifier-agent"
+  # Extract just the version number from `amplifier-agent --version`, which
+  # prints e.g. "amplifier-agent, version 0.5.0". Falls back to empty if the
+  # output shape ever changes.
+  AMPLIFIER_VERSION=$(amplifier-agent --version 2>/dev/null | awk '{print $NF}')
+  if [ -z "$AMPLIFIER_VERSION" ]; then
+    warn "amplifier-agent is installed but its version could not be determined."
+    warn "Force-reinstall:"
+    warn "  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@$AMPLIFIER_TAG"
+  elif ver_lt "$AMPLIFIER_VERSION" "$AMPLIFIER_MIN_VERSION"; then
+    warn "amplifier-agent $AMPLIFIER_VERSION found, but >= $AMPLIFIER_MIN_VERSION is REQUIRED."
+    warn "The setup will continue, but the adapter WILL FAIL at runtime."
+    warn "Force-reinstall:"
+    warn "  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@$AMPLIFIER_TAG"
+  elif ver_lt "$AMPLIFIER_VERSION" "$AMPLIFIER_RECOMMENDED_VERSION"; then
+    info "amplifier-agent $AMPLIFIER_VERSION ✓ (works, but $AMPLIFIER_RECOMMENDED_VERSION recommended for delegation)"
+    info "Upgrade (recommended):"
+    info "  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@$AMPLIFIER_TAG"
+  else
+    info "amplifier-agent $AMPLIFIER_VERSION ✓"
+  fi
 fi
 
 # ---------- Step 2: clone or update paperclip at pinned SHA ----------
