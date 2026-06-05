@@ -54,6 +54,7 @@ import {
 
 import {
   AaaError,
+  DEFAULT_ALLOWLIST,
   type DisplayEvent,
   type McpServerConfig,
   spawnAgent,
@@ -604,7 +605,15 @@ export async function execute(
         resume: resumeSessionIdArg !== null,
         cwd,
         env: {
-          allowlist: Object.keys(env),
+          // DEFAULT_ALLOWLIST (PATH, HOME, USER, LANG, TERM, TMPDIR) is
+          // REQUIRED so the engine subprocess can locate `uv` on PATH to
+          // pull bundle modules (loop-streaming, tool-bash, tool-skills,
+          // etc.) into ~/.amplifier/cache on first run. Without it the
+          // first heartbeat fails with "Cannot initialize without
+          // orchestrator: Module 'loop-streaming' not found … 'uv' is not
+          // installed." Object.keys(env) alone only carries PAPERCLIP_*
+          // and provider keys, which is insufficient.
+          allowlist: [...DEFAULT_ALLOWLIST, ...Object.keys(env)],
           extra: env,
         },
         providerOverride: provider,
