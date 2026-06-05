@@ -14,7 +14,7 @@ is closer to its own deprecation. Both are useful signals.
 |---|---|
 | `packages/adapters/amplifier-local/` | The adapter package itself (TS source, vitest tests, package.json) |
 | `ui/src/adapters/amplifier-local/` | React `ConfigFields` + `UIAdapterModule` |
-| `AMPLIFIER-LOCAL.md` | Adapter user docs (prerequisites, quick start, API key setup, troubleshooting) |
+| `PAPERCLIP-README.md` | Verbatim copy of upstream paperclip's README, preserved for reference |
 | `UPSTREAM_SYNC.md` | Sync procedure for keeping current with upstream |
 | `KNOWN_DIVERGENCE.md` | This file |
 | `NOTICE.md` | Copyright attribution for the combined work |
@@ -26,7 +26,7 @@ is closer to its own deprecation. Both are useful signals.
 
 | Path | Modification |
 |---|---|
-| `README.md` | Prepended a fork notice section. Original paperclip content is preserved verbatim below the divider. |
+| `README.md` | Replaced entirely with an `amplifier_local`-focused setup guide. Paperclip's original README content is preserved verbatim in `PAPERCLIP-README.md`. |
 | `SECURITY.md` | Replaced with the Microsoft OSS compliance variant. (Paperclip's original was 322 bytes; the Microsoft version is the standard MSRC pattern.) |
 | `server/src/adapters/registry.ts` | Added `amplifierLocalAdapter` import + object + registration entry |
 | `ui/src/adapters/registry.ts` | Added `amplifierLocalUIAdapter` import + entry |
@@ -38,7 +38,7 @@ is closer to its own deprecation. Both are useful signals.
 
 ## Files preserved as-is from upstream
 
-Everything not listed above. The combined diff against the upstream pin can be inspected with:
+Everything not listed above. The combined diff against the upstream pin:
 
 ```bash
 git remote add upstream https://github.com/paperclipai/paperclip 2>/dev/null
@@ -48,8 +48,8 @@ git diff $(cat UPSTREAM_PIN)..HEAD
 
 ## When upstream touches any modified file above
 
-The upstream sync (`UPSTREAM_SYNC.md`) is the place where the merge happens. The rule of thumb:
+The upstream sync (`UPSTREAM_SYNC.md`) is the place where the merge happens. Rule of thumb:
 
-- **adapter package** files: should never conflict because upstream doesn't have this package.
+- **adapter package files**: should never conflict — upstream doesn't have this package.
 - **registry files**: most likely place for conflicts. Reapply the amplifier_local registration on top of whatever shape upstream adopted.
-- **README, SECURITY**: preserve fork-specific intent; accept upstream textual changes below the fork banner.
+- **`README.md`**: upstream changes go into `PAPERCLIP-README.md` (verbatim copy). The fork-side `README.md` stays as the amplifier_local-focused entry point.
