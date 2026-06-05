@@ -42,7 +42,6 @@ import {
   asStringArray,
   buildInvocationEnvForLogs,
   buildPaperclipEnv,
-  ensurePaperclipSkillSymlink,
   joinPromptSections,
   parseObject,
   readPaperclipRuntimeSkillEntries,
@@ -158,19 +157,28 @@ function resolveProvider(
 }
 
 // ---------------------------------------------------------------------------
-// Skills injection — symlink paperclip skills into the managed skills dir
+// Skills materialization — copy paperclip skills into the managed skills dir
 // ---------------------------------------------------------------------------
 
 /**
- * Ensure each desired paperclip skill is symlinked into the adapter's managed
- * skills dir. The engine's tool-skills module discovers skills by scanning
- * directories listed in `host_config.skills.skills`. We point it at this
- * managed dir (NOT the user's cwd) so the project checkout stays clean.
+ * Ensure each desired paperclip skill is materialized (real files, not
+ * symlinks) into the adapter's managed skills dir. The engine's tool-skills
+ * module discovers skills by scanning directories listed in
+ * `host_config.skills.skills` and REJECTS any symlink that escapes the
+ * configured directory boundary as a security measure — so the codex-local
+ * "symlink to source" pattern does not work here.
  *
- * Mirrors `ensureCodexSkillsInjected` from codex-local but lives under
- * paperclip's per-company managed dir instead of `$CODEX_HOME/skills/`.
+ * We mirror what Claude Code does for its skills: recursive copy with
+ * `dereference: true` so any internal symlinks in the source skill (e.g.
+ * `references/agents` → `../../agents`) get resolved to real files inside
+ * the managed dir. The managed dir then satisfies the engine's "no escape"
+ * security check.
+ *
+ * Mtime-based skip avoids re-copying on every heartbeat. If a target was
+ * previously a symlink (from an older adapter version), it's removed and
+ * replaced with a real copy.
  */
-async function ensureAmplifierSkillsInjected(
+async function ensureAmplifierSkillsMaterialized(
   onLog: AdapterExecutionContext["onLog"],
   skillsDir: string,
   skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
@@ -182,19 +190,48 @@ async function ensureAmplifierSkillsInjected(
   await fs.mkdir(skillsDir, { recursive: true, mode: 0o700 });
   for (const entry of filtered) {
     const target = path.join(skillsDir, entry.runtimeName);
+    let action: "skipped" | "materialized" | "refreshed" = "materialized";
     try {
-      const result = await ensurePaperclipSkillSymlink(entry.source, target);
-      if (result === "skipped") continue;
+      // Decide what to do with whatever is currently at `target`.
+      try {
+        const targetStat = await fs.lstat(target);
+        if (targetStat.isSymbolicLink()) {
+          // Legacy symlink from a prior adapter version — remove so we
+          // can replace it with a real copy. The engine would reject it
+          // on the next heartbeat anyway.
+          await fs.rm(target, { recursive: true, force: true });
+          action = "refreshed";
+        } else {
+          const sourceStat = await fs.stat(entry.source);
+          if (targetStat.mtimeMs >= sourceStat.mtimeMs) {
+            action = "skipped";
+          } else {
+            await fs.rm(target, { recursive: true, force: true });
+            action = "refreshed";
+          }
+        }
+      } catch {
+        // Target doesn't exist — first materialization, action stays "materialized".
+      }
+      if (action === "skipped") continue;
+      // Recursive copy with symlink dereference. `force: true` lets cp
+      // overwrite any partial leftover from a prior interrupted run.
+      await fs.cp(entry.source, target, {
+        recursive: true,
+        dereference: true,
+        force: true,
+        errorOnExist: false,
+      });
       await onLog(
         "stdout",
-        `[paperclip] ${result === "repaired" ? "Repaired" : "Injected"} ` +
+        `[paperclip] ${action === "refreshed" ? "Refreshed" : "Materialized"} ` +
           `amplifier-local skill "${entry.runtimeName}" into ${skillsDir}\n`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await onLog(
         "stderr",
-        `[paperclip] Failed to inject amplifier-local skill "${entry.key}" into ${skillsDir}: ${msg}\n`,
+        `[paperclip] Failed to materialize amplifier-local skill "${entry.key}" into ${skillsDir}: ${msg}\n`,
       );
     }
   }
@@ -380,13 +417,15 @@ export async function execute(
   const hostConfigPath = resolveHostConfigPath(managedDir);
   const skillsDir = resolveSkillsDir(managedDir);
 
-  // ---- 4. Skills injection ----
+  // ---- 4. Skills materialization ----
   // Read paperclip skills entries (from config or filesystem discovery) and
-  // resolve the desired subset, then symlink each into the managed skills
-  // dir. NEVER write into the user's cwd.
+  // resolve the desired subset, then materialize each into the managed
+  // skills dir as REAL files (not symlinks — the engine's tool-skills
+  // module rejects symlinks that escape the skills dir boundary).
+  // NEVER write into the user's cwd.
   const skillsEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredSkillNames = resolvePaperclipDesiredSkillNames(config, skillsEntries);
-  await ensureAmplifierSkillsInjected(onLog, skillsDir, skillsEntries, desiredSkillNames);
+  await ensureAmplifierSkillsMaterialized(onLog, skillsDir, skillsEntries, desiredSkillNames);
 
   // ---- 5. Env assembly ----
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
@@ -493,7 +532,7 @@ export async function execute(
   // Provider config carries model. Approval mode "yes" matches the wrapper's
   // approval: { mode: "yes" } so the engine's G3 fail-fast is satisfied
   // either way (argv beats host_config, but both agree). Skills dir is the
-  // managed one we just symlinked into.
+  // managed one we just materialized into.
   const hostConfig: AmplifierAgentHostConfig = {
     approval: { mode: "yes" },
     provider: {
