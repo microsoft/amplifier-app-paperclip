@@ -1,3 +1,21 @@
+> [!IMPORTANT]
+> **This is a fork of [paperclipai/paperclip](https://github.com/paperclipai/paperclip), maintained by Microsoft.**
+>
+> It integrates the **`amplifier_local`** adapter, which lets paperclip agents run on the [Amplifier engine](https://github.com/microsoft/amplifier-agent). The fork is pinned to upstream paperclip at SHA [`8014445b`](https://github.com/paperclipai/paperclip/commit/8014445b) and merges upstream periodically — see [`UPSTREAM_SYNC.md`](UPSTREAM_SYNC.md).
+>
+> | Topic | Where |
+> |---|---|
+> | Adapter user docs (API key, troubleshooting) | [`AMPLIFIER-LOCAL.md`](AMPLIFIER-LOCAL.md) |
+> | Paperclip-itself bugs | File upstream at [paperclipai/paperclip/issues](https://github.com/paperclipai/paperclip/issues) |
+> | Amplifier adapter bugs | File here |
+> | Fork divergence surface | [`KNOWN_DIVERGENCE.md`](KNOWN_DIVERGENCE.md) |
+> | Upstream sync procedure | [`UPSTREAM_SYNC.md`](UPSTREAM_SYNC.md) |
+> | Attribution / license | [`NOTICE.md`](NOTICE.md) |
+>
+> *The original paperclip README is preserved verbatim below.*
+
+---
+
 <p align="center">
   <img src="doc/assets/banner.jpg" alt="Paperclip is the app people use to manage AI agents for work." width="720" />
 </p>
