@@ -13,9 +13,9 @@ differences are which engine binary the heartbeat invokes (`amplifier-agent` ins
 - Node 18+
 - pnpm 9+
 - git
-- `amplifier-agent` >= 0.5.0 on PATH (>= 0.5.1 recommended for delegation flows):
+- `amplifier-agent` **>= 0.5.1** on PATH:
   ```bash
-  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent
+  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1
   ```
 - An LLM provider API key (typically `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`)
 
@@ -61,17 +61,14 @@ shell env (multi-tenant by design).
 
 | Engine version | Status |
 |---|---|
-| `< 0.5.0` | **Below minimum** — adapter will fail at runtime with config-layer errors |
-| `0.5.0` | Works, but sub-session delegation may auto-deny commands outside the auto-approve list (bundled `hooks-approval` module is on by default) |
-| `>= 0.5.1` | **Recommended.** `hooks-approval` is opt-in per its upstream USAGE_GUIDE, so delegation flows work cleanly |
+| `< 0.5.1` | **Below minimum — not supported.** Versions before `0.5.0` fail at startup with config-layer errors. `0.5.0` runs but sub-session delegation auto-denies any command outside the auto-approve list because the bundled `hooks-approval` module is mounted by default. |
+| `>= 0.5.1` | **Required.** `hooks-approval` is opt-in per its upstream USAGE_GUIDE, so delegation flows work cleanly. |
 
-Force-reinstall to a specific version:
+Force-reinstall the required version:
 
 ```bash
 uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1
 ```
-
-(Substitute `@main` for the latest tip if no release tag exists yet.)
 
 ## Updating
 
@@ -89,11 +86,11 @@ When upstream paperclip ships changes, they land here through periodic merges �
 | Symptom | Cause | Fix |
 |---|---|---|
 | `amplifier_local` doesn't appear in the adapter type dropdown | Build wasn't run or failed | Run `pnpm install` — check for errors in the adapter workspace package at `packages/adapters/amplifier-local/` |
-| Agent runs hit `No approval provider registered, auto-denying` in stderr | `amplifier-agent` < 0.5.1 with `hooks-approval` mounted | `uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@main` |
+| Agent runs hit `No approval provider registered, auto-denying` in stderr | `amplifier-agent` older than 0.5.1 (predates the `hooks-approval` unmount) | `uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1` |
 | `provider_init_failed` on the first heartbeat | API key missing from the agent's env vars | Add the right key to **Agent Environment Run Variables** (see above) |
 | `amplifier-agent: command not found` when paperclip launches a turn | Not on PATH | `uv tool install git+https://github.com/microsoft/amplifier-agent`; ensure `~/.local/bin` is on `PATH` |
 | First heartbeat is slow (~30s) | Engine materializing skills and downloading provider modules into `~/.amplifier/cache/` | One-time cost. Subsequent runs are fast. |
-| Wrong model output / token count zeros | Engine version mismatch | Confirm `amplifier-agent --version` reports >= 0.5.0 |
+| Wrong model output / token count zeros | Engine version mismatch | Confirm `amplifier-agent --version` reports >= 0.5.1 |
 
 ## How the adapter is integrated
 
