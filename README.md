@@ -67,29 +67,44 @@ Once you've configured an agent (see next section) and triggered its first heart
 
 ## Configure your agent's API key
 
-The Amplifier engine reads the provider API key from the **agent's environment variables**,
-not from the host shell. Every agent that uses `amplifier_local` needs its own key
-configured in the UI:
+The `amplifier_local` adapter reads provider API keys from two sources, in this precedence:
+
+1. **Per-agent** — set in the agent's edit form (Agent Environment Run Variables). Wins on collision.
+2. **Host shell of the paperclip server** — exported in the shell where `pnpm dev` runs. Whitelisted to known provider keys only. Each inherited key emits a `[paperclip] Inherited <KEY> from host environment` line in the run log for provenance.
+
+Pick whichever fits. Host-shell inheritance is the common case for single-user dev. Per-agent is required for multi-tenant deployments where each agent needs distinct credentials.
+
+The whitelist (the only env vars the adapter inherits from the paperclip server's shell):
+
+| Adapter model | Required key |
+|---|---|
+| `claude-*` (Anthropic) | `ANTHROPIC_API_KEY` |
+| `gpt-*`, `o3-*`, `o4-*` (OpenAI) | `OPENAI_API_KEY` |
+| `gpt-*` via Azure | `AZURE_OPENAI_API_KEY` (+ `AZURE_OPENAI_ENDPOINT`) |
+| `gemini-*` (Gemini) | `GEMINI_API_KEY` |
+| `llama*`, `qwen*`, etc. (Ollama) | `OLLAMA_HOST` (e.g. `http://localhost:11434`) |
+
+Any other env vars in the paperclip shell (e.g. `DATABASE_URL`, `AWS_SECRET_ACCESS_KEY`, `PATH`) are **never** passed through to agents.
+
+### Option A — Host shell (simplest, single-user dev)
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+pnpm dev
+```
+
+Every `amplifier_local` agent automatically picks up the key. Confirm it landed by checking a run log for `[paperclip] Inherited ANTHROPIC_API_KEY from host environment`.
+
+### Option B — Per-agent (multi-tenant, or when you need distinct keys per agent)
 
 1. Create or open an agent that uses `amplifier_local`.
 2. In the agent's edit form, find the **Agent Environment Run Variables** section.
-3. Add a key-value pair:
+3. Add a key-value pair using the env var from the table above. Choose the `plain` value type, or use `secret_ref` if you have a secret store wired.
+4. Save the agent. Then click **Test environment** — you should see `amplifier_provider_key_present_config` (info, green) in the diagnostics.
 
-   | Adapter model | Required key |
-   |---|---|
-   | `claude-*` (Anthropic) | `ANTHROPIC_API_KEY` |
-   | `gpt-*`, `o3-*`, `o4-*` (OpenAI) | `OPENAI_API_KEY` |
-   | `gpt-*` via Azure | `AZURE_OPENAI_API_KEY` (+ `AZURE_OPENAI_ENDPOINT`) |
-   | `llama*`, `qwen*`, etc. (Ollama) | `OLLAMA_HOST` (e.g. `http://localhost:11434`) |
+Per-agent values always override host-shell inheritance. Setting an explicit empty string (e.g. `ANTHROPIC_API_KEY: ""`) is a "no key for this agent" signal that also blocks host-shell inheritance.
 
-   Choose the `plain` value type, or use `secret_ref` if you have a secret store wired.
-4. Save the agent. Then click **Test environment** — you should see
-   `amplifier_provider_key_present_config` (info, green) in the diagnostics.
-
-If the key is missing, the first heartbeat will fail with `provider_init_failed` or
-`provider_not_configured`. Fix it by adding the env var to the same Agent Environment Run
-Variables section and re-triggering the heartbeat. The adapter never reads keys from your
-shell env (multi-tenant by design).
+If no key is available from either source, the first heartbeat fails with `provider_init_failed` or `provider_not_configured`. Fix by setting the env var via Option A or B and re-triggering the heartbeat.
 
 ## Engine version compatibility
 
