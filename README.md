@@ -37,6 +37,32 @@ The script will:
 Open **http://127.0.0.1:3101** — look for `amplifier_local` in the adapter type dropdown
 when creating or editing an agent.
 
+## Configure your agent's API key
+
+The Amplifier engine reads the provider API key from the **agent's environment variables**,
+not from the host shell. Every agent that uses the `amplifier_local` adapter needs its own
+key configured in the UI:
+
+1. Create or open an agent that uses `amplifier_local`.
+2. In the agent's edit form, find the **Agent Environment Run Variables** section.
+3. Add a key-value pair:
+
+   | Adapter model | Required key |
+   |---|---|
+   | `claude-*` (Anthropic) | `ANTHROPIC_API_KEY` |
+   | `gpt-*`, `o3-*`, `o4-*` (OpenAI) | `OPENAI_API_KEY` |
+   | `gpt-*` via Azure | `AZURE_OPENAI_API_KEY` (+ `AZURE_OPENAI_ENDPOINT`) |
+   | `llama*`, `qwen*`, etc. (Ollama) | `OLLAMA_HOST` (e.g. `http://localhost:11434`) |
+
+   Choose the `plain` value type, or use `secret_ref` if you have a secret store wired.
+4. Save the agent. Then click **Test environment** — you should see
+   `amplifier_provider_key_present_config` (info, green) in the diagnostics.
+
+If the key is missing, the first heartbeat will fail with `provider_init_failed` or
+`provider_not_configured` — fix it by adding the env var to the same Agent Environment
+Run Variables section and re-triggering the heartbeat. The adapter never reads keys
+from your shell env (multi-tenant by design).
+
 ## What gets installed
 
 The overlay adds the `amplifier-local` adapter to paperclip at the same integration depth as
