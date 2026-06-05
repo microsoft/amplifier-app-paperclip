@@ -29,12 +29,23 @@ differences are which engine binary the heartbeat invokes (`amplifier-agent` ins
 git clone https://github.com/microsoft/amplifier-app-paperclip
 cd amplifier-app-paperclip
 pnpm install
+
+# Optional but recommended: export provider API keys in this shell
+# BEFORE starting the server. Every `amplifier_local` agent you create
+# later will inherit these automatically (whitelisted vars only —
+# see "Configure your agent's API key" below for the full list).
+export ANTHROPIC_API_KEY=sk-ant-...     # for claude-* models
+export OPENAI_API_KEY=sk-...            # for gpt-* / o3-* / o4-* models
+# Add only the keys for providers you actually use.
+
 pnpm paperclipai onboard --yes   # one-time: creates board user + Agent JWT secret, then runs the server
 ```
 
-`onboard --yes` combines initial setup and `pnpm dev`. For subsequent runs (after the first onboarding) use `pnpm dev` directly.
+`onboard --yes` combines initial setup and `pnpm dev`. For subsequent runs (after the first onboarding) use `pnpm dev` directly — but remember to re-export the keys in that shell, otherwise the server starts without them.
 
 Open **http://127.0.0.1:3100** — look for `amplifier_local` in the adapter type dropdown when creating or editing an agent. (The server binds to `127.0.0.1` only; if you need to reach it from another machine, set up an SSH tunnel or reverse proxy.)
+
+If you skipped the `export` step or want different keys per agent, set them per-agent via the UI instead — see [Configure your agent's API key](#configure-your-agents-api-key) below. Both paths work; per-agent values override the host-shell values on collision.
 
 ## Verifying it works
 
