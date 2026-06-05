@@ -1,18 +1,21 @@
 # amplifier-app-paperclip
 
-A turn-key installer that clones [paperclip](https://github.com/paperclipai/paperclip) at a
-pinned commit, applies the `amplifier-local` adapter overlay, and starts the service. The
-adapter lets paperclip agents run on the
-[Amplifier engine](https://github.com/microsoft/amplifier-agent).
+Setting up [paperclip](https://github.com/paperclipai/paperclip) with the **`amplifier_local`** adapter,
+which lets paperclip agents run on the [Amplifier engine](https://github.com/microsoft/amplifier-agent).
+
+The adapter is integrated at the same depth as paperclip's built-in `claude_local` and
+`codex_local` adapters — same UI, same session lifecycle, same observability. The only
+differences are which engine binary the heartbeat invokes (`amplifier-agent` instead of
+`claude` / `codex`) and what models are available.
 
 ## Prerequisites
 
 - Node 18+
 - pnpm 9+
 - git
-- `amplifier-agent` 0.5.0+ on PATH
-  ```
-  uv tool install git+https://github.com/microsoft/amplifier-agent
+- `amplifier-agent` **>= 0.5.1** on PATH:
+  ```bash
+  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1
   ```
 - An LLM provider API key (typically `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`)
 
@@ -21,125 +24,115 @@ adapter lets paperclip agents run on the
 ```bash
 git clone https://github.com/microsoft/amplifier-app-paperclip
 cd amplifier-app-paperclip
-./setup.sh
+pnpm install
+pnpm dev
 ```
-
-The script will:
-1. Clone paperclip at the pinned commit (`8014445b`) into `./paperclip/`
-2. Copy the `amplifier-local` adapter package + UI integration into the clone
-3. Apply idempotent registry edits (imports, object definitions, workspace deps)
-4. `pnpm install`
-5. Run the adapter's 38 unit tests
-6. Typecheck the adapter, server, and UI
-7. Seed a per-worktree database (first run only)
-8. Start paperclip's dev server
 
 Open **http://127.0.0.1:3101** — look for `amplifier_local` in the adapter type dropdown
 when creating or editing an agent.
 
-## What gets installed
+## Configure your agent's API key
 
-The overlay adds the `amplifier-local` adapter to paperclip at the same integration depth as
-the built-in `claude_local` and `codex_local` adapters:
+The Amplifier engine reads the provider API key from the **agent's environment variables**,
+not from the host shell. Every agent that uses `amplifier_local` needs its own key
+configured in the UI:
 
-| Path in paperclip clone | What |
+1. Create or open an agent that uses `amplifier_local`.
+2. In the agent's edit form, find the **Agent Environment Run Variables** section.
+3. Add a key-value pair:
+
+   | Adapter model | Required key |
+   |---|---|
+   | `claude-*` (Anthropic) | `ANTHROPIC_API_KEY` |
+   | `gpt-*`, `o3-*`, `o4-*` (OpenAI) | `OPENAI_API_KEY` |
+   | `gpt-*` via Azure | `AZURE_OPENAI_API_KEY` (+ `AZURE_OPENAI_ENDPOINT`) |
+   | `llama*`, `qwen*`, etc. (Ollama) | `OLLAMA_HOST` (e.g. `http://localhost:11434`) |
+
+   Choose the `plain` value type, or use `secret_ref` if you have a secret store wired.
+4. Save the agent. Then click **Test environment** — you should see
+   `amplifier_provider_key_present_config` (info, green) in the diagnostics.
+
+If the key is missing, the first heartbeat will fail with `provider_init_failed` or
+`provider_not_configured`. Fix it by adding the env var to the same Agent Environment Run
+Variables section and re-triggering the heartbeat. The adapter never reads keys from your
+shell env (multi-tenant by design).
+
+## Engine version compatibility
+
+| Engine version | Status |
 |---|---|
-| `packages/adapters/amplifier-local/` | Adapter workspace package (TS source + tests) |
-| `ui/src/adapters/amplifier-local/` | UI integration (React `ConfigFields` + `UIAdapterModule`) |
-| `server/src/adapters/registry.ts` | Import block + `amplifierLocalAdapter` object + registration |
-| `ui/src/adapters/registry.ts` | Import + `registerBuiltInUIAdapters` entry |
-| `cli/src/adapters/registry.ts` | Import + object + Map entry |
-| `server/package.json` | `"@paperclipai/adapter-amplifier-local": "workspace:*"` |
-| `ui/package.json` | Same |
-| `cli/package.json` | Same |
+| `< 0.5.1` | **Below minimum — not supported.** Versions before `0.5.0` fail at startup with config-layer errors. `0.5.0` runs but sub-session delegation auto-denies any command outside the auto-approve list because the bundled `hooks-approval` module is mounted by default. |
+| `>= 0.5.1` | **Required.** `hooks-approval` is opt-in per its upstream USAGE_GUIDE, so delegation flows work cleanly. |
 
-All overlay edits are idempotent (sentinel-marker guarded), so re-running `setup.sh` is safe.
-
-## Configuration
-
-Environment variables:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `PAPERCLIP_DIR` | `./paperclip` | Where to clone/update paperclip |
-| `RUN_DEV` | `1` | Set `0` to stop after install (no dev server) |
-| `RUN_TESTS` | `1` | Set `0` to skip adapter unit tests |
-
-Examples:
+Force-reinstall the required version:
 
 ```bash
-# Install only, no dev server, no tests
-RUN_DEV=0 RUN_TESTS=0 ./setup.sh
-
-# Install into a custom directory
-PAPERCLIP_DIR=/opt/paperclip RUN_DEV=0 ./setup.sh
-
-# Refresh the adapter after pulling new changes in this repo
-RUN_DEV=0 ./setup.sh
+uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1
 ```
 
-To pin a different paperclip ref, edit `PAPERCLIP_REF` and re-run `./setup.sh`.
-(Note: registry shapes may change upstream; if the overlay fails to apply, file an issue.)
-
-## Updating the adapter
+## Updating
 
 ```bash
-# Pull latest adapter changes from this repo
 git pull
-
-# Re-apply over the existing paperclip clone (safe to re-run)
-RUN_DEV=0 ./setup.sh
+pnpm install   # only if package.json / pnpm-lock changed
+pnpm dev
 ```
+
+When upstream paperclip ships changes, they land here through periodic merges — see
+[`UPSTREAM_SYNC.md`](UPSTREAM_SYNC.md).
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Step 2: fatal: not a git repository ... .git` | `PAPERCLIP_DIR` exists as a non-git directory (e.g. pre-created via `mkdir -p` before running setup) | Setup now handles this automatically: empty dirs are removed and re-cloned; non-empty non-git dirs error out with a clear message. If you see the old form of the error, you're on an outdated `setup.sh` — `git pull` and re-run. |
-| `Step 5: Apply registry overlay` reports failures | paperclip's registry files have drifted upstream so the string anchors no longer match | Either pin `PAPERCLIP_REF` to the last known-good SHA, or file an issue with the upstream paperclip ref you tried. Hand-edit recovery: re-apply the overlay manually following the sentinel-marker patterns. |
-| `amplifier-agent` not found warning | `amplifier-agent` not on PATH | `uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent`; ensure `~/.local/bin` is on `PATH`. |
-| Dev server starts but agent runs hit `No approval provider registered, auto-denying` | `amplifier-agent` < 0.5.1 (the version that unmounted `hooks-approval` by default) | Upgrade: `amplifier-agent update` (>=0.5.0) or reinstall via `uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent`. |
-| `Step 9: pnpm paperclipai worktree init` blocked or hung | Existing worktree state for the instance you cloned | Wipe with `rm -rf ~/.paperclip-worktrees/instances/<instance-name>` and re-run. |
+| `amplifier_local` doesn't appear in the adapter type dropdown | Build wasn't run or failed | Run `pnpm install` — check for errors in the adapter workspace package at `packages/adapters/amplifier-local/` |
+| Agent runs hit `No approval provider registered, auto-denying` in stderr | `amplifier-agent` older than 0.5.1 (predates the `hooks-approval` unmount) | `uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1` |
+| `provider_init_failed` on the first heartbeat | API key missing from the agent's env vars | Add the right key to **Agent Environment Run Variables** (see above) |
+| `amplifier-agent: command not found` when paperclip launches a turn | Not on PATH | `uv tool install git+https://github.com/microsoft/amplifier-agent`; ensure `~/.local/bin` is on `PATH` |
+| First heartbeat is slow (~30s) | Engine materializing skills and downloading provider modules into `~/.amplifier/cache/` | One-time cost. Subsequent runs are fast. |
+| Wrong model output / token count zeros | Engine version mismatch | Confirm `amplifier-agent --version` reports >= 0.5.1 |
 
-Re-running `setup.sh` is always safe — overlay edits are idempotent.
+## How the adapter is integrated
 
-## Architecture
+The adapter is part of this fork as real source files, not an overlay or patch. Key paths:
 
-This repo implements **Option A (full overlay)**: we ship the adapter source alongside an
-installer that overlays it onto a pinned paperclip clone. The overlay approach trades some
-maintenance burden for full UX parity with built-in adapters (custom React `ConfigFields`,
-native `formatStdoutEvent`, etc.).
+| Path | What |
+|---|---|
+| `packages/adapters/amplifier-local/` | Adapter workspace package — TS source + 38 vitest tests |
+| `ui/src/adapters/amplifier-local/` | React `ConfigFields` + `UIAdapterModule` |
+| `server/src/adapters/registry.ts` | Server-side adapter registration |
+| `ui/src/adapters/registry.ts` | UI-side adapter registration |
+| `cli/src/adapters/registry.ts` | CLI-side adapter registration |
+| `{server,ui,cli}/package.json` | Workspace dep `@paperclipai/adapter-amplifier-local` |
 
-Alternatives considered:
+To see exactly what this fork adds vs upstream:
 
-- **Option B (plugin):** ship as an external adapter plugin via paperclip's documented plugin
-  system. Server-side fully equivalent; UI side limited to schema-driven forms (no custom
-  React); CLI side not supported. We chose A to preserve UX consistency and to retain
-  flexibility for engine evolution that wants richer UI.
-- **Option C (plugin + tiny overlay):** mostly plugin, with a minimal patch for CLI parity.
-  Same UI trade-off as B.
-
-The longer-term path is to graduate this adapter into paperclip's built-in adapter set
-upstream once contribution channels open.
-
-### Layout
-
-```
-amplifier-app-paperclip/
-├── adapter/                  Mirror of packages/adapters/amplifier-local/ (committed source only)
-├── paperclip-ui-overlay/     Mirror of ui/src/adapters/amplifier-local/
-├── apply-overlay.mjs         Idempotent Node script — registry + package.json edits
-├── setup.sh                  Main installer (bash)
-├── PAPERCLIP_REF             Pinned paperclip commit SHA
-└── PAPERCLIP_REPO            paperclipai/paperclip
+```bash
+git remote add upstream https://github.com/paperclipai/paperclip 2>/dev/null
+git fetch upstream
+git diff $(cat UPSTREAM_PIN)..HEAD
 ```
 
-### How the overlay works
+## About this fork
 
-`setup.sh` runs `apply-overlay.mjs <paperclip-dir>` which edits 6 files in the paperclip
-clone using stable string anchors. Each edit is guarded by a sentinel string; if the sentinel
-is already present the edit is skipped — making the script idempotent and safe to re-run.
+This repository is a fork of [paperclipai/paperclip](https://github.com/paperclipai/paperclip)
+maintained by Microsoft, pinned to upstream paperclip at SHA recorded in [`UPSTREAM_PIN`](UPSTREAM_PIN)
+and merged forward periodically.
+
+| Topic | Where |
+|---|---|
+| Original paperclip README | [`PAPERCLIP-README.md`](PAPERCLIP-README.md) |
+| Paperclip-itself bugs | File upstream at [paperclipai/paperclip/issues](https://github.com/paperclipai/paperclip/issues) |
+| `amplifier-local` adapter bugs | File here |
+| Upstream sync procedure + conflict rules | [`UPSTREAM_SYNC.md`](UPSTREAM_SYNC.md) |
+| Files this fork modifies or adds | [`KNOWN_DIVERGENCE.md`](KNOWN_DIVERGENCE.md) |
+| Attribution and license | [`NOTICE.md`](NOTICE.md) — original Paperclip AI 2025 copyright preserved verbatim in [`LICENSE`](LICENSE) |
+
+The long-term plan is for the `amplifier-local` adapter to graduate upstream into
+paperclip's built-in adapter set, at which point this fork becomes a thin shim or is
+archived. Until then: monthly upstream syncs.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [`LICENSE`](LICENSE) (original Paperclip AI copyright preserved) and [`NOTICE.md`](NOTICE.md)
+(Microsoft additions attribution).
