@@ -269,13 +269,59 @@ function parseRuntimeSessionParams(raw: unknown): RuntimeSessionParamsView {
  * argv don't override. Listed here so we can warn / pass through the
  * operator's `config.env` values without enforcing a specific shape.
  */
-const PROVIDER_ENV_VARS = new Set([
+/**
+ * Whitelist of provider-related env vars that the adapter is willing to
+ * inherit from the paperclip server's host environment when the per-agent
+ * `config.env` does not set them. Exported for testability.
+ *
+ * Inheritance behavior matches `claude-local` and `codex-local`, which
+ * spread `process.env` into the spawned subprocess. The choice to limit
+ * inheritance to a whitelist (rather than inherit the entire host env)
+ * is a security stance: an operator who accidentally exports
+ * `DATABASE_URL` or similar to the paperclip-running shell should NOT
+ * silently leak it to every amplifier-local agent.
+ *
+ * Per-agent `config.env` always wins on collision (see
+ * `inheritProviderKeysFromHostEnv` ordering vs `layerUserEnv` below).
+ */
+export const PROVIDER_ENV_VARS = new Set([
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
   "AZURE_OPENAI_API_KEY",
   "AZURE_OPENAI_ENDPOINT",
+  "GEMINI_API_KEY",
   "OLLAMA_HOST",
 ]);
+
+/**
+ * Inherit provider API keys (and related vars) from the paperclip server's
+ * host environment into the agent subprocess env, but only:
+ *   1. for keys in `PROVIDER_ENV_VARS` (whitelist),
+ *   2. when the value is a non-empty string in `hostEnv`, and
+ *   3. when the per-agent `envConfig` does not already set them.
+ *
+ * Each inherited key is logged via `onLog` (when provided) so the operator
+ * can see provenance in the run log:
+ *     [paperclip] Inherited ANTHROPIC_API_KEY from host environment
+ *
+ * Exported for unit testing.
+ */
+export async function inheritProviderKeysFromHostEnv(
+  env: Record<string, string>,
+  envConfig: Record<string, unknown>,
+  hostEnv: NodeJS.ProcessEnv,
+  onLog?: (channel: "stdout" | "stderr", chunk: string) => Promise<void> | void,
+): Promise<void> {
+  for (const key of PROVIDER_ENV_VARS) {
+    const fromHost = hostEnv[key];
+    if (typeof fromHost !== "string" || fromHost.length === 0) continue;
+    if (key in envConfig) continue;
+    env[key] = fromHost;
+    if (onLog) {
+      await onLog("stdout", `[paperclip] Inherited ${key} from host environment\n`);
+    }
+  }
+}
 
 function layerUserEnv(
   env: Record<string, string>,
@@ -468,8 +514,15 @@ export async function execute(
     env.PAPERCLIP_API_KEY = authToken;
   }
 
+  // Inherit provider API keys from the paperclip server's host environment
+  // when the per-agent config.env does not set them. Whitelisted to
+  // provider-related vars (PROVIDER_ENV_VARS) to avoid leaking unrelated
+  // host env to agents. Per-agent config.env always wins on collision
+  // (applied next, by layerUserEnv).
+  await inheritProviderKeysFromHostEnv(env, envConfig, process.env, onLog);
+
   // User-supplied env overrides last. This is where provider API keys come
-  // from (ANTHROPIC_API_KEY etc.).
+  // from (ANTHROPIC_API_KEY etc.) when explicitly configured per-agent.
   layerUserEnv(env, envConfig);
 
   // ---- 6. Session resume gate ----
