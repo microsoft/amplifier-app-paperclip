@@ -37,6 +37,7 @@
     "check:tokens": "node scripts/check-forbidden-tokens.mjs",
     "check:no-git-push": "node scripts/check-no-git-push.mjs",
     "test:check-no-git-push": "node --test scripts/check-no-git-push.test.mjs",
+    "test:link-plugin-dev-sdk": "node --test scripts/link-plugin-dev-sdk.test.mjs",
     "docs:dev": "cd docs && npx mintlify dev",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",
