@@ -416,6 +416,25 @@ function buildChildProcessFactory(
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a timeoutSec config value to the timeoutMs expected by
+ * amplifier-agent-ts.  Returns an explicit 0 for any non-positive input so
+ * the "no timeout" intent is unambiguous — we never rely on
+ * undefined-vs-default semantics in the wrapper.
+ *
+ * The wrapper (amplifier-agent-ts >=0.7) treats timeoutMs <= 0 as disabled.
+ * Using 0 instead of undefined makes the disabled case explicit and prevents
+ * the wrapper's DEFAULT_TIMEOUT_MS from silently applying when the caller
+ * omits the field.
+ */
+export function timeoutSecToMs(timeoutSec: number): number {
+  return timeoutSec > 0 ? timeoutSec * 1000 : 0;
+}
+
+// ---------------------------------------------------------------------------
 // The execute() entrypoint
 // ---------------------------------------------------------------------------
 
@@ -673,7 +692,7 @@ export async function execute(
         approval: { mode: "yes" },
         configPath: hostConfigPath,
         allowProtocolSkew,
-        timeoutMs: timeoutSec > 0 ? timeoutSec * 1000 : undefined,
+        timeoutMs: timeoutSecToMs(timeoutSec), // 0 = no timeout (explicit; wrapper treats <=0 as disabled)
         ...(mcpServers ? { mcpServers } : {}),
         runChildProcess: buildChildProcessFactory(onLog, onSpawn),
       });

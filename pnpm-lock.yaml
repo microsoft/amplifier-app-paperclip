@@ -148,8 +148,8 @@ importers:
         specifier: workspace:*
         version: link:../../adapter-utils
       amplifier-agent-ts:
-        specifier: ^0.6.1
-        version: 0.6.1
+        specifier: ^0.6.2
+        version: 0.6.2
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -4250,8 +4250,8 @@ packages:
   ajv@8.18.0:
     resolution: {integrity: sha512-PlXPeEWMXMZ7sPYOHqmDyCJzcfNrUr3fGNKtezX14ykXOEIvyK81d+qydx89KY5O71FKMPaQ2vBfBFI5NHR63A==}
 
-  amplifier-agent-ts@0.6.1:
-    resolution: {integrity: sha512-Csj2sZ7T3YXftTJ6cT3fWtLhxBJBgv0JOsaDgTXJuFHBdnrb6YHzbDYhDRuIahdXeDkR0/LgNujoySq/1hLg8w==}
+  amplifier-agent-ts@0.6.2:
+    resolution: {integrity: sha512-LaGpMiFFIFw7OpPk+zW6qewtnreXu3ifQ0gcjTaBT+FpmsIwNk53oPE3AwqLN2x7tYohTAV5EKrZjkCdElKp6g==}
     engines: {node: '>=20'}
 
   anser@2.3.5:
@@ -11354,7 +11354,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  amplifier-agent-ts@0.6.1: {}
+  amplifier-agent-ts@0.6.2: {}
 
   anser@2.3.5: {}
 

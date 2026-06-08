@@ -525,6 +525,24 @@ function normalizeRequestedThinkingEffort(config: Record<string, unknown>): stri
   ).trim();
 }
 
+/**
+ * Convert a timeoutSec config value to the timeoutMs used by the ACPX
+ * runtime.  Returns an explicit 0 for any non-positive input so the
+ * "no timeout" intent is unambiguous — we never rely on
+ * undefined-vs-default semantics in downstream runtime calls.
+ *
+ * The default (DEFAULT_ACPX_LOCAL_TIMEOUT_SEC = 0) means "no timeout";
+ * passing an explicit 0 makes that intent visible at every call site.
+ *
+ * NOTE: The calling code guards timer creation with `if (timeoutMs)` (falsy
+ * check), so 0 correctly skips the setTimeout.  If passed to an external
+ * ACPX runtime API (createRuntime / startTurn), verify that the ACPX version
+ * in use treats timeoutMs: 0 as "no timeout" before relying on that path.
+ */
+export function timeoutSecToMs(timeoutSec: number): number {
+  return timeoutSec > 0 ? timeoutSec * 1000 : 0;
+}
+
 function isCompatibleSession(
   params: Record<string, unknown>,
   runtime: Pick<AcpxPreparedRuntime, "fingerprint" | "sessionKey" | "cwd" | "mode" | "acpxAgent" | "remoteExecutionIdentity">,
@@ -1393,7 +1411,7 @@ export function createAcpxLocalExecutor(deps: ExecuteDeps = {}) {
       agentRegistry: prepared.agentRegistry,
       permissionMode: prepared.permissionMode,
       nonInteractivePermissions: prepared.nonInteractivePermissions,
-      timeoutMs: prepared.timeoutSec > 0 ? prepared.timeoutSec * 1000 : undefined,
+      timeoutMs: timeoutSecToMs(prepared.timeoutSec), // 0 = no timeout (explicit; see timeoutSecToMs)
       // Scope ACPX runtime verbose logs to the claude agent only — that's the
       // surface we know needs the extra session-event detail (PAPA-388). codex
       // and custom agents already emit their own per-tool output and don't
@@ -1567,7 +1585,7 @@ export function createAcpxLocalExecutor(deps: ExecuteDeps = {}) {
     let timedOut = false;
     const textParts: string[] = [];
     try {
-      const timeoutMs = prepared.timeoutSec > 0 ? prepared.timeoutSec * 1000 : undefined;
+      const timeoutMs = timeoutSecToMs(prepared.timeoutSec); // 0 = no timeout (explicit; see timeoutSecToMs)
       controller = new AbortController();
       if (timeoutMs) {
         timeout = setTimeout(() => {
