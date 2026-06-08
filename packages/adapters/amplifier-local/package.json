@@ -51,7 +51,7 @@
   },
   "dependencies": {
     "@paperclipai/adapter-utils": "workspace:*",
-    "amplifier-agent-ts": "^0.6.1",
+    "amplifier-agent-ts": "^0.6.2",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
