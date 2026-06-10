@@ -197,10 +197,45 @@ function parseNotification(
         },
       ];
     }
-    case "usage":
-      // Usage events are aggregated into the result entry; nothing to display
-      // in-line. Could surface as system metadata in a future iteration.
-      return [];
+    case "usage": {
+      // amplifier-agent #45 enriched the wire `usage` notification with cost,
+      // model, provider, cache token counts, llm duration, and (for delegated
+      // sub-agents) agentName. Surface them as a system transcript entry so
+      // users can see per-LLM-call costs / model use inline. The aggregate
+      // values for the final turn are still attached to the result entry
+      // built from the envelope.
+      const inToks = asNumber(params.inputTokens);
+      const outToks = asNumber(params.outputTokens);
+      const parts: string[] = [`in=${inToks}`, `out=${outToks}`];
+      // cost is emitted as a STRING by the engine (notifications.py:123).
+      const rawCost = params.cost;
+      const costNum =
+        typeof rawCost === "string"
+          ? Number.parseFloat(rawCost)
+          : typeof rawCost === "number"
+            ? rawCost
+            : NaN;
+      if (Number.isFinite(costNum)) parts.push(`cost=$${costNum.toFixed(6)}`);
+      const cacheR = asNumber(params.cacheReadTokens);
+      if (cacheR > 0) parts.push(`cache_read=${cacheR}`);
+      const cacheW = asNumber(params.cacheWriteTokens);
+      if (cacheW > 0) parts.push(`cache_write=${cacheW}`);
+      const dur = asNumber(params.llmDurationMs);
+      if (dur > 0) parts.push(`dur=${dur}ms`);
+      const m = asString(params.model);
+      if (m) parts.push(`model=${m}`);
+      const pv = asString(params.provider);
+      if (pv) parts.push(`provider=${pv}`);
+      const an = asString(params.agentName);
+      if (an) parts.push(`agent=${an}`);
+      return [
+        {
+          kind: "system",
+          ts,
+          text: `[usage] ${parts.join(" ")}`,
+        },
+      ];
+    }
     case "error":
       return [
         {
