@@ -704,6 +704,16 @@ export async function execute(
         },
         providerOverride: provider,
         approval: { mode: "yes" },
+        // Request NDJSON wire-event emission on stderr so wrapper-ts's
+        // parseNdjsonStream → display.onEvent path delivers typed
+        // notifications to our `event.type === "notification"` switch
+        // below. Without this, the engine defaults to CliDisplaySystem
+        // (human-readable text), the NDJSON consumer sees only non-JSON
+        // lines, and the notification handler never fires — leaving cost,
+        // model, cache tokens, and llm duration from amplifier-agent #45
+        // unconsumed. See execute.ts notification switch + the engine's
+        // JsonDisplaySystem.
+        displayMode: "ndjson",
         configPath: hostConfigPath,
         allowProtocolSkew,
         timeoutMs: timeoutSecToMs(timeoutSec), // 0 = no timeout (explicit; wrapper treats <=0 as disabled)
