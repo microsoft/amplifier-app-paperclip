@@ -39,6 +39,8 @@ import {
   execute as amplifierExecute,
   testEnvironment as amplifierTestEnvironment,
   sessionCodec as amplifierSessionCodec,
+  listAmplifierLocalSkills as listAmplifierSkills,
+  syncAmplifierLocalSkills as syncAmplifierSkills,
 } from "@paperclipai/adapter-amplifier-local/server";
 import {
   agentConfigurationDoc as amplifierAgentConfigurationDoc,
@@ -301,11 +303,19 @@ const amplifierLocalAdapter: ServerAdapterModule = {
   type: "amplifier_local",
   execute: amplifierExecute,
   testEnvironment: amplifierTestEnvironment,
+  listSkills: listAmplifierSkills,
+  syncSkills: syncAmplifierSkills,
   sessionCodec: amplifierSessionCodec,
   models: amplifierModels,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,
   instructionsPathKey: "instructionsFilePath",
+  // Skills are materialized just-in-time inside execute.ts on every spawn
+  // into the per-company `<companyDir>/amplifier-local/skills/` dir, so the
+  // server runtime does NOT need to pre-materialize them into runtimeConfig.
+  // (Same setting as before this change; called out for the listSkills/
+  // syncSkills additions above which surface that same materialization plan
+  // to the UI.)
   requiresMaterializedRuntimeSkills: false,
   agentConfigurationDoc: amplifierAgentConfigurationDoc,
 };

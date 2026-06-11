@@ -9,6 +9,10 @@ import type { AdapterSessionCodec } from "@paperclipai/adapter-utils";
 export { execute } from "./execute.js";
 export { testEnvironment } from "./test.js";
 export {
+  listAmplifierLocalSkills,
+  syncAmplifierLocalSkills,
+} from "./skills.js";
+export {
   asAmplifierErrorView,
   describeAmplifierError,
   isAmplifierApprovalUnconfiguredError,
