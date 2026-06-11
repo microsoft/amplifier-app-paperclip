@@ -714,6 +714,18 @@ export async function execute(
         // unconsumed. See execute.ts notification switch + the engine's
         // JsonDisplaySystem.
         displayMode: "ndjson",
+        // Isolate each paperclip agent's session state into its own engine
+        // workspace dir. Without this, every amplifier-local spawn shares a
+        // cwd-derived slug (e.g. "default-9e80f0e7") and all agents'
+        // transcripts mingle under one workspaces/.../sessions/ tree.
+        //
+        // Slug shape: `pc-<companyId 8>-<agentId 8>` — paperclip prefix for
+        // host attribution, then two hex segments. UUIDs are already
+        // hex-only so they pass the engine's slug grammar
+        // (`[a-z0-9][a-z0-9-]{0,63}`) without transformation. 8-char
+        // prefixes give 4 billion combos per segment, collision-safe in
+        // practice; session_id under sessions/ disambiguates further.
+        workspace: `pc-${agent.companyId.slice(0, 8)}-${agent.id.slice(0, 8)}`,
         configPath: hostConfigPath,
         allowProtocolSkew,
         timeoutMs: timeoutSecToMs(timeoutSec), // 0 = no timeout (explicit; wrapper treats <=0 as disabled)
@@ -769,34 +781,53 @@ export async function execute(
           const method = event.method;
           const params = (event.params ?? {}) as Record<string, unknown>;
           if (method === "usage") {
-            inputTokens = asNumber(params.inputTokens, inputTokens);
-            outputTokens = asNumber(params.outputTokens, outputTokens);
-            // amplifier-agent emits `cost` as a STRING (per
-            // notifications.py:123 — `cost: NotRequired[str]`). The previous
-            // `typeof c === "number"` guard silently dropped every cost value.
-            // Accept string or number; coerce to number for downstream
-            // consumers (paperclip's costUsd field is `number | null`).
+            // amplifier-agent emits ONE `usage` notification per LLM call
+            // (plus a "session-end" signal per agent session that carries
+            // {inputTokens: 0, outputTokens: 0, sessionCostTotal}). We
+            // accumulate per-call values across the whole turn (including
+            // delegated sub-agent calls — they're paid for by this run too).
+            //
+            // The previous version REPLACED on every event, so:
+            //   1. Multi-call turns only kept the last call's values.
+            //   2. The session-end signal (in/out=0) zeroed everything out.
+            //
+            // Per-field strategy:
+            //   - Counters (tokens, cost, cache, duration): SUM, skipping 0
+            //     so the session-end signal doesn't disturb running totals.
+            //   - Single-valued (model, provider, agentName): take last seen
+            //     when non-empty.
+            //   - sessionCostTotal: take last seen — it's the engine's
+            //     authoritative aggregate, monotonically updated.
+            const inTok = asNumber(params.inputTokens, 0);
+            if (inTok > 0) inputTokens += inTok;
+            const outTok = asNumber(params.outputTokens, 0);
+            if (outTok > 0) outputTokens += outTok;
+            // amplifier-agent emits `cost` as a STRING (notifications.py:123
+            // — `cost: NotRequired[str]`). Accept string or number; sum
+            // across calls.
             const c = params.cost;
+            let perCallCost = Number.NaN;
             if (typeof c === "string") {
-              const parsed = Number.parseFloat(c);
-              if (Number.isFinite(parsed)) cost = parsed;
-            } else if (typeof c === "number" && Number.isFinite(c)) {
-              cost = c;
+              perCallCost = Number.parseFloat(c);
+            } else if (typeof c === "number") {
+              perCallCost = c;
             }
-            // Enriched fields (engine post-#45). All NotRequired on the wire;
-            // overwrite local accumulators only when the field is present so a
-            // later usage event without the field doesn't blank out an
-            // earlier-captured value.
+            if (Number.isFinite(perCallCost) && perCallCost > 0) {
+              cost = (cost ?? 0) + perCallCost;
+            }
+            // Enriched fields (engine post-#45). Sum the counters, last-wins
+            // for the single-valued ones. Always guard for presence so the
+            // session-end signal (sparse fields) doesn't disturb totals.
             const m = params.model;
             if (typeof m === "string" && m.length > 0) usageModel = m;
             const pv = params.provider;
             if (typeof pv === "string" && pv.length > 0) usageProvider = pv;
-            const dur = params.llmDurationMs;
-            if (typeof dur === "number" && Number.isFinite(dur)) llmDurationMs = dur;
-            const cr = params.cacheReadTokens;
-            if (typeof cr === "number" && Number.isFinite(cr)) cacheReadTokens = cr;
-            const cw = params.cacheWriteTokens;
-            if (typeof cw === "number" && Number.isFinite(cw)) cacheWriteTokens = cw;
+            const dur = asNumber(params.llmDurationMs, 0);
+            if (dur > 0) llmDurationMs = (llmDurationMs ?? 0) + dur;
+            const cr = asNumber(params.cacheReadTokens, 0);
+            if (cr > 0) cacheReadTokens = (cacheReadTokens ?? 0) + cr;
+            const cw = asNumber(params.cacheWriteTokens, 0);
+            if (cw > 0) cacheWriteTokens = (cacheWriteTokens ?? 0) + cw;
             const sct = params.sessionCostTotal;
             if (typeof sct === "string") {
               const parsedSct = Number.parseFloat(sct);
