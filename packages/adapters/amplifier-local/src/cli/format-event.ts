@@ -120,13 +120,38 @@ function printNotification(method: string, params: Record<string, unknown>): voi
       );
       break;
     }
-    case "usage":
-      console.log(
-        pc.blue(
-          `[usage] in=${asNumber(params.inputTokens)} out=${asNumber(params.outputTokens)}`,
-        ),
-      );
+    case "usage": {
+      // amplifier-agent #45 enriched the wire `usage` notification with
+      // cost, model, provider, cache token counts, and llm duration. Surface
+      // them all when present. `cost` is a STRING on the wire
+      // (notifications.py:123); coerce before formatting.
+      const parts: string[] = [
+        `in=${asNumber(params.inputTokens)}`,
+        `out=${asNumber(params.outputTokens)}`,
+      ];
+      const rawCost = params.cost;
+      const costNum =
+        typeof rawCost === "string"
+          ? Number.parseFloat(rawCost)
+          : typeof rawCost === "number"
+            ? rawCost
+            : NaN;
+      if (Number.isFinite(costNum)) parts.push(`cost=$${costNum.toFixed(6)}`);
+      const cacheR = asNumber(params.cacheReadTokens);
+      if (cacheR > 0) parts.push(`cache_read=${cacheR}`);
+      const cacheW = asNumber(params.cacheWriteTokens);
+      if (cacheW > 0) parts.push(`cache_write=${cacheW}`);
+      const dur = asNumber(params.llmDurationMs);
+      if (dur > 0) parts.push(`dur=${dur}ms`);
+      const m = asString(params.model);
+      if (m) parts.push(`model=${m}`);
+      const pv = asString(params.provider);
+      if (pv) parts.push(`provider=${pv}`);
+      const an = asString(params.agentName);
+      if (an) parts.push(`agent=${an}`);
+      console.log(pc.blue(`[usage] ${parts.join(" ")}`));
       break;
+    }
     case "error":
       console.log(
         pc.red(

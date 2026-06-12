@@ -39,10 +39,13 @@ import {
   execute as amplifierExecute,
   testEnvironment as amplifierTestEnvironment,
   sessionCodec as amplifierSessionCodec,
+  listAmplifierLocalSkills as listAmplifierSkills,
+  syncAmplifierLocalSkills as syncAmplifierSkills,
+  listAmplifierLocalModels as listAmplifierModelsDynamic,
+  refreshAmplifierLocalModels as refreshAmplifierModelsDynamic,
 } from "@paperclipai/adapter-amplifier-local/server";
 import {
   agentConfigurationDoc as amplifierAgentConfigurationDoc,
-  models as amplifierModels,
 } from "@paperclipai/adapter-amplifier-local";
 import {
   execute as codexExecute,
@@ -301,11 +304,27 @@ const amplifierLocalAdapter: ServerAdapterModule = {
   type: "amplifier_local",
   execute: amplifierExecute,
   testEnvironment: amplifierTestEnvironment,
+  listSkills: listAmplifierSkills,
+  syncSkills: syncAmplifierSkills,
   sessionCodec: amplifierSessionCodec,
-  models: amplifierModels,
+  // Model list is fully dynamic: engine-side discovery via amplifier-agent's
+  // `models list` aggregate command (one subprocess spawn, 60s TTL cache).
+  // No static `models` field — earlier revisions merged a hardcoded fallback
+  // here, which masked engine misconfiguration by showing a "usable" dropdown
+  // even when no provider could actually authenticate. The engine is now the
+  // single source of truth; if discovery fails, the UI sees the error.
+  // See packages/adapters/amplifier-local/src/server/models.ts for details.
+  listModels: listAmplifierModelsDynamic,
+  refreshModels: refreshAmplifierModelsDynamic,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,
   instructionsPathKey: "instructionsFilePath",
+  // Skills are materialized just-in-time inside execute.ts on every spawn
+  // into the per-company `<companyDir>/amplifier-local/skills/` dir, so the
+  // server runtime does NOT need to pre-materialize them into runtimeConfig.
+  // (Same setting as before this change; called out for the listSkills/
+  // syncSkills additions above which surface that same materialization plan
+  // to the UI.)
   requiresMaterializedRuntimeSkills: false,
   agentConfigurationDoc: amplifierAgentConfigurationDoc,
 };

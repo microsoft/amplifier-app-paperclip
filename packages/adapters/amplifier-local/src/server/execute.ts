@@ -94,6 +94,20 @@ interface RunAttemptOk {
   inputTokens: number;
   outputTokens: number;
   cost: number | null;
+  /**
+   * Enriched fields from amplifier-agent #45 streaming-hook enrichment.
+   * The wire `usage` notification carries these; they're nullable because
+   * the engine emits them only when the underlying data is available
+   * (e.g. cache fields only when the provider reports cache hits, agentName
+   * only on delegated sub-agent sessions).
+   */
+  model: string | null;
+  provider: string | null;
+  llmDurationMs: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  sessionCostTotal: number | null;
+  agentName: string | null;
   terminalError: ReturnType<typeof asAmplifierErrorView> | null;
   /** Tail of stderr surfaced by the wrapper on the error event. */
   stderrBuffer: string;
@@ -688,8 +702,35 @@ export async function execute(
           allowlist: [...DEFAULT_ALLOWLIST, ...Object.keys(env)],
           extra: env,
         },
-        providerOverride: provider,
+        // providerOverride was removed from SpawnAgentParams in the same wave
+        // that removed modelOverride/effortOverride (host_config is now the
+        // single source of truth for provider selection). Paperclip already
+        // writes provider.module + provider.config.model into host_config.json
+        // via writeHostConfigAtomic above, which the engine reads via the
+        // --config flag we still pass below — no argv-level override needed.
         approval: { mode: "yes" },
+        // Request NDJSON wire-event emission on stderr so wrapper-ts's
+        // parseNdjsonStream → display.onEvent path delivers typed
+        // notifications to our `event.type === "notification"` switch
+        // below. Without this, the engine defaults to CliDisplaySystem
+        // (human-readable text), the NDJSON consumer sees only non-JSON
+        // lines, and the notification handler never fires — leaving cost,
+        // model, cache tokens, and llm duration from amplifier-agent #45
+        // unconsumed. See execute.ts notification switch + the engine's
+        // JsonDisplaySystem.
+        displayMode: "ndjson",
+        // Isolate each paperclip agent's session state into its own engine
+        // workspace dir. Without this, every amplifier-local spawn shares a
+        // cwd-derived slug (e.g. "default-9e80f0e7") and all agents'
+        // transcripts mingle under one workspaces/.../sessions/ tree.
+        //
+        // Slug shape: `pc-<companyId 8>-<agentId 8>` — paperclip prefix for
+        // host attribution, then two hex segments. UUIDs are already
+        // hex-only so they pass the engine's slug grammar
+        // (`[a-z0-9][a-z0-9-]{0,63}`) without transformation. 8-char
+        // prefixes give 4 billion combos per segment, collision-safe in
+        // practice; session_id under sessions/ disambiguates further.
+        workspace: `pc-${agent.companyId.slice(0, 8)}-${agent.id.slice(0, 8)}`,
         configPath: hostConfigPath,
         allowProtocolSkew,
         timeoutMs: timeoutSecToMs(timeoutSec), // 0 = no timeout (explicit; wrapper treats <=0 as disabled)
@@ -708,6 +749,17 @@ export async function execute(
     let inputTokens = 0;
     let outputTokens = 0;
     let cost: number | null = null;
+    // Enriched usage fields from amplifier-agent #45 streaming-hook enrichment.
+    // The wire `usage` notification carries these; they accumulate the LATEST
+    // value seen across the turn (the engine emits a usage event after each LLM
+    // call, and the values represent the most recent call).
+    let usageModel: string | null = null;
+    let usageProvider: string | null = null;
+    let llmDurationMs: number | null = null;
+    let cacheReadTokens: number | null = null;
+    let cacheWriteTokens: number | null = null;
+    let sessionCostTotal: number | null = null;
+    let agentName: string | null = null;
     let terminalError: ReturnType<typeof asAmplifierErrorView> | null = null;
     let stderrBuffer = ""; // accumulates only what we can see via the error event's stderrTail
 
@@ -734,10 +786,62 @@ export async function execute(
           const method = event.method;
           const params = (event.params ?? {}) as Record<string, unknown>;
           if (method === "usage") {
-            inputTokens = asNumber(params.inputTokens, inputTokens);
-            outputTokens = asNumber(params.outputTokens, outputTokens);
+            // amplifier-agent emits ONE `usage` notification per LLM call
+            // (plus a "session-end" signal per agent session that carries
+            // {inputTokens: 0, outputTokens: 0, sessionCostTotal}). We
+            // accumulate per-call values across the whole turn (including
+            // delegated sub-agent calls — they're paid for by this run too).
+            //
+            // The previous version REPLACED on every event, so:
+            //   1. Multi-call turns only kept the last call's values.
+            //   2. The session-end signal (in/out=0) zeroed everything out.
+            //
+            // Per-field strategy:
+            //   - Counters (tokens, cost, cache, duration): SUM, skipping 0
+            //     so the session-end signal doesn't disturb running totals.
+            //   - Single-valued (model, provider, agentName): take last seen
+            //     when non-empty.
+            //   - sessionCostTotal: take last seen — it's the engine's
+            //     authoritative aggregate, monotonically updated.
+            const inTok = asNumber(params.inputTokens, 0);
+            if (inTok > 0) inputTokens += inTok;
+            const outTok = asNumber(params.outputTokens, 0);
+            if (outTok > 0) outputTokens += outTok;
+            // amplifier-agent emits `cost` as a STRING (notifications.py:123
+            // — `cost: NotRequired[str]`). Accept string or number; sum
+            // across calls.
             const c = params.cost;
-            if (typeof c === "number") cost = c;
+            let perCallCost = Number.NaN;
+            if (typeof c === "string") {
+              perCallCost = Number.parseFloat(c);
+            } else if (typeof c === "number") {
+              perCallCost = c;
+            }
+            if (Number.isFinite(perCallCost) && perCallCost > 0) {
+              cost = (cost ?? 0) + perCallCost;
+            }
+            // Enriched fields (engine post-#45). Sum the counters, last-wins
+            // for the single-valued ones. Always guard for presence so the
+            // session-end signal (sparse fields) doesn't disturb totals.
+            const m = params.model;
+            if (typeof m === "string" && m.length > 0) usageModel = m;
+            const pv = params.provider;
+            if (typeof pv === "string" && pv.length > 0) usageProvider = pv;
+            const dur = asNumber(params.llmDurationMs, 0);
+            if (dur > 0) llmDurationMs = (llmDurationMs ?? 0) + dur;
+            const cr = asNumber(params.cacheReadTokens, 0);
+            if (cr > 0) cacheReadTokens = (cacheReadTokens ?? 0) + cr;
+            const cw = asNumber(params.cacheWriteTokens, 0);
+            if (cw > 0) cacheWriteTokens = (cacheWriteTokens ?? 0) + cw;
+            const sct = params.sessionCostTotal;
+            if (typeof sct === "string") {
+              const parsedSct = Number.parseFloat(sct);
+              if (Number.isFinite(parsedSct)) sessionCostTotal = parsedSct;
+            } else if (typeof sct === "number" && Number.isFinite(sct)) {
+              sessionCostTotal = sct;
+            }
+            const an = params.agentName;
+            if (typeof an === "string" && an.length > 0) agentName = an;
           } else if (method === "result/final") {
             const text = asString(params.text, "");
             if (text) resultText = text;
@@ -754,6 +858,13 @@ export async function execute(
       inputTokens,
       outputTokens,
       cost,
+      model: usageModel,
+      provider: usageProvider,
+      llmDurationMs,
+      cacheReadTokens,
+      cacheWriteTokens,
+      sessionCostTotal,
+      agentName,
       terminalError,
       stderrBuffer,
     };
@@ -920,6 +1031,13 @@ function buildResult(input: {
       }
     : null;
 
+  // Prefer the wire-reported model/provider when the engine surfaces them on
+  // the `usage` notification (amplifier-agent #45). Sub-agents may use a
+  // different provider/model than the host config, and the wire value is the
+  // authoritative per-call record. Fall back to host-config values otherwise.
+  const effectiveModel = attempt.model ?? model;
+  const effectiveProvider = attempt.provider ?? provider;
+
   return {
     exitCode: attempt.terminalError ? 1 : 0,
     signal: null,
@@ -929,12 +1047,19 @@ function buildResult(input: {
     usage: {
       inputTokens: attempt.inputTokens,
       outputTokens: attempt.outputTokens,
+      // Surface cache-read tokens through UsageSummary.cachedInputTokens
+      // (the existing optional slot). cacheWriteTokens has no slot in
+      // UsageSummary today; it's still captured on RunAttemptOk for future
+      // surfacing through a contract extension.
+      ...(attempt.cacheReadTokens != null
+        ? { cachedInputTokens: attempt.cacheReadTokens }
+        : {}),
     },
     sessionId: attempt.sessionId,
     sessionParams,
     sessionDisplayId: attempt.sessionId,
-    provider,
-    model,
+    provider: effectiveProvider,
+    model: effectiveModel,
     costUsd: attempt.cost,
     summary: attempt.resultText,
     clearSession: clearSession && !attempt.sessionId,
