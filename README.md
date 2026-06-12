@@ -15,11 +15,11 @@ differences are which engine binary the heartbeat invokes (`amplifier-agent` ins
 - pnpm 9+ (`npm install -g pnpm@latest`)
 - git
 - `uv` for installing the engine (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- `amplifier-agent` **>= 0.5.1**, installed *as the same user that will run paperclip*. The paperclip server invokes `amplifier-agent` per turn and inherits the user's PATH to find both `amplifier-agent` and `uv`. Installing as a different user (e.g. root) silently breaks heartbeats:
+- `amplifier-agent` **>= 0.6.0**, installed *as the same user that will run paperclip*. The paperclip server invokes `amplifier-agent` per turn and inherits the user's PATH to find both `amplifier-agent` and `uv`. Installing as a different user (e.g. root) silently breaks heartbeats:
   ```bash
-  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1
+  uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.6.0
   # ensure ~/.local/bin is on PATH; verify:
-  amplifier-agent version --json   # → {"version":"0.5.1","protocolVersion":"0.3.0"}
+  amplifier-agent version --json   # → {"version":"0.6.0","protocolVersion":"0.3.0"}
   ```
 - An LLM provider API key for the model you'll use (e.g. `ANTHROPIC_API_KEY` for Claude, `OPENAI_API_KEY` for GPT). The key is set **per-agent** in the paperclip UI, not in your host shell.
 
@@ -62,7 +62,7 @@ curl -s http://127.0.0.1:3100/api/adapters \
 
 # 3. Engine version (per-user, must match the user running paperclip)
 amplifier-agent version --json
-# expect: {"version":"0.5.1","protocolVersion":"0.3.0"}
+# expect: {"version":"0.6.0","protocolVersion":"0.3.0"}
 ```
 
 **Note:** `/api/health` returns `authReady: true` even *before* onboarding has run, so health alone is not a sufficient check. The dev-server console banner shows `Agent JWT: set` once onboarding has completed — that's the authoritative signal. If you see `Agent JWT: missing`, re-run `pnpm paperclipai onboard --yes`.
@@ -121,13 +121,13 @@ If no key is available from either source, the first heartbeat fails with `provi
 
 | Engine version | Status |
 |---|---|
-| `< 0.5.1` | **Below minimum — not supported.** Versions before `0.5.0` fail at startup with config-layer errors. `0.5.0` runs but sub-session delegation auto-denies any command outside the auto-approve list because the bundled `hooks-approval` module is mounted by default. |
-| `>= 0.5.1` | **Required.** `hooks-approval` is opt-in per its upstream USAGE_GUIDE, so delegation flows work cleanly. |
+| `< 0.6.0` | **Below minimum — not supported.** The `amplifier_local` adapter depends on engine features that arrived in the `0.6.0` release wave: `--display ndjson` for structured wire events (cost, model, cache metrics on stderr), `--workspace` for per-agent session isolation, and the `models list` aggregate subcommand for dynamic provider discovery. Older versions also still accepted `--provider`/`--model`/`--effort` on `run`, which the adapter no longer emits — running them together produces `No such option '--provider'`. |
+| `>= 0.6.0` | **Required.** Includes all of `--display ndjson`, `--workspace`, `models list` (aggregate mode via `listAllModels()`), the unified `~/.amplifier-agent/` storage root, and the `host_config.provider.{module,config}` single-source-of-truth for provider/model selection. Wrapper-ts `0.7.0` (the npm dep) matches this engine. |
 
 Force-reinstall the required version:
 
 ```bash
-uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1
+uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.6.0
 ```
 
 ## Updating
@@ -146,15 +146,16 @@ When upstream paperclip ships changes, they land here through periodic merges �
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Agent JWT: missing (run pnpm paperclipai onboard)` in dev console, or local-agent runs fail to authenticate | Fresh install — onboarding has not been run. The board user and JWT signing secret don't exist yet. | `pnpm paperclipai onboard --yes` (creates the board user + writes `PAPERCLIP_AGENT_JWT_SECRET` to the instance `.env`, then restarts the server) |
-| Heartbeat fails with `Cannot initialize without orchestrator … 'uv' is not installed` | The engine subprocess can't find `uv` on PATH because paperclip is running as a different user than the one that installed `amplifier-agent`/`uv` | Install `amplifier-agent` as the same user that runs paperclip (`uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1`) and confirm `~/.local/bin` is on that user's PATH |
+| Heartbeat fails with `Cannot initialize without orchestrator … 'uv' is not installed` | The engine subprocess can't find `uv` on PATH because paperclip is running as a different user than the one that installed `amplifier-agent`/`uv` | Install `amplifier-agent` as the same user that runs paperclip (`uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.6.0`) and confirm `~/.local/bin` is on that user's PATH |
 | `Error: You are running this script as root. Postgres does not support running as root` on `pnpm dev` | Embedded PostgreSQL refuses root | Create and switch to a non-root user before continuing |
 | `amplifier_local` doesn't appear in the adapter type dropdown | Build wasn't run or failed | Run `pnpm install` — check for errors in the adapter workspace package at `packages/adapters/amplifier-local/` |
-| Agent runs hit `No approval provider registered, auto-denying` in stderr | `amplifier-agent` older than 0.5.1 (predates the `hooks-approval` unmount) | `uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.5.1` |
+| Agent runs hit `No approval provider registered, auto-denying` in stderr | `amplifier-agent` older than `0.6.0` — the bundled `hooks-approval` module was unmounted upstream (originally in `0.5.1`, carried through to the `0.6.0` minimum required here) | `uv tool install --reinstall --force git+https://github.com/microsoft/amplifier-agent@v0.6.0` |
 | Run log shows `Skipping symlink that escapes skill directory boundary` | Adapter older than [PR #5](https://github.com/microsoft/amplifier-app-paperclip/pull/5) (was symlinking skills instead of copying them) | `git pull` and `pnpm install` to pick up the materialization fix |
+| Engine spawn fails with `No such option '--provider'` (or `--model` / `--effort`) | Adapter is calling `amplifier-agent run` with provider/model/effort argv that was removed from the engine in the `0.6.0` release wave (host_config is the single source of truth now) | Bump `amplifier-agent` to `>= 0.6.0` AND rebuild the paperclip adapter dist (`pnpm --filter @paperclipai/adapter-amplifier-local build`) so the stale compiled JS in `packages/adapters/amplifier-local/dist/server/` no longer emits the deprecated flags |
 | `provider_init_failed` on the first heartbeat | API key missing from the agent's env vars | Add the right key to **Agent Environment Run Variables** (see above) |
 | `amplifier-agent: command not found` when paperclip launches a turn | Not on PATH for the running user | `uv tool install git+https://github.com/microsoft/amplifier-agent`; ensure `~/.local/bin` is on `PATH` |
-| First heartbeat is slow (~30s) | Engine materializing skills and downloading provider modules into `~/.amplifier/cache/` | One-time cost. Subsequent runs are fast. |
-| Wrong model output / token count zeros | Engine version mismatch | Confirm `amplifier-agent --version` reports >= 0.5.1 |
+| First heartbeat is slow (~30s) | Engine materializing skills and downloading provider modules into `~/.amplifier-agent/cache/` (unified storage root introduced alongside the `0.6.0` minimum; older versions used XDG paths under `~/.cache/amplifier-agent/` and `~/.local/state/amplifier-agent/`) | One-time cost. Subsequent runs are fast. |
+| Wrong model output / token count zeros | Engine version mismatch | Confirm `amplifier-agent --version` reports >= 0.6.0 |
 | Server is up but I can't reach it from another machine | Server binds `127.0.0.1` only by design | Use an SSH tunnel (`ssh -L 3100:127.0.0.1:3100 <host>`) or set up a reverse proxy |
 
 ## How the adapter is integrated
