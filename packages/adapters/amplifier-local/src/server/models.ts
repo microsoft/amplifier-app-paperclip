@@ -6,43 +6,41 @@
  * and emits a per-provider results envelope. The TS wrapper exposes this as
  * `listAllModels()`. This file is the adapter-side adapter for that wrapper
  * function — it converts the engine's envelope into the `AdapterModel[]`
- * shape paperclip's UI expects, applies a short TTL cache to avoid hammering
- * the engine on every page load, and falls back to a static list when
- * discovery fails entirely.
+ * shape paperclip's UI expects and applies a short TTL cache to avoid
+ * hammering the engine on every page load.
  *
  * Design notes:
  *
+ * - **No static fallback.** Earlier revisions of this file merged the
+ *   discovered list with a hardcoded `DIRECT_MODELS` array shipped in the
+ *   adapter source. That pattern is gone: the engine is the single source
+ *   of truth for what models exist. If the engine reports nothing, the UI
+ *   shows nothing — accurate (no engine-installed providers can authenticate)
+ *   beats convenient-but-misleading.
+ *
+ * - **No failure swallowing.** When `listAllModels()` rejects (engine
+ *   binary missing, subprocess timeout, malformed envelope, exit 1/2),
+ *   the rejection propagates to the HTTP route handler. The UI sees an
+ *   error, not a silently-served stale list. Misconfigured engines should
+ *   announce themselves loudly, not hide behind cached statics.
+ *
  * - **Why aggregate (not 4 single-provider calls)**: one subprocess spawn
- *   instead of four. The engine parallelizes the provider queries internally.
- *   Per-provider auth status comes back as `status: "credentials_missing"`
- *   data in the envelope rather than as exceptions to catch — simpler error
- *   model on the consuming side.
+ *   instead of four. The engine parallelizes the provider queries
+ *   internally. Per-provider auth status comes back as
+ *   `status: "credentials_missing"` data in the envelope rather than as
+ *   exceptions to catch — simpler error model on the consuming side.
  *
- * - **Why merge with static fallback**: a fresh paperclip install with no
- *   API keys configured produces an envelope where every provider has
- *   `status: "credentials_missing"` and `models: []`. The agent-creation
- *   form would show an empty dropdown — useless. Static fallback keeps the
- *   form populated with sensible defaults; discovered models override and
- *   extend the list as keys get configured.
- *
- * - **Why TTL cache (not API-key fingerprint)**: the aggregate call spans
- *   four providers, each with potentially different env-var keys
+ * - **TTL cache, no key fingerprint**: the aggregate call spans four
+ *   providers, each with potentially different env-var keys
  *   (ANTHROPIC_API_KEY, OPENAI_API_KEY, AZURE_OPENAI_API_KEY, etc.).
  *   Fingerprinting all of them would be brittle. A short TTL (60s) is the
- *   simplest invalidation strategy and matches claude-local's posture.
- *   Users who rotate keys can call `refreshAmplifierLocalModels()`
- *   explicitly via the UI's refresh button.
- *
- * - **Discovery failure ≠ crash**: if `listAllModels()` rejects (engine
- *   binary missing, subprocess timeout, malformed envelope), we log a
- *   warning and fall back to the static list. The agent-creation form must
- *   keep working even if the engine is misconfigured.
+ *   simplest invalidation strategy. Users who rotate keys can call
+ *   `refreshAmplifierLocalModels()` explicitly via the UI's refresh button.
+ *   We do NOT cache failures — next call retries.
  */
 
-import { listAllModels, ListModelsError } from "amplifier-agent-ts";
+import { listAllModels } from "amplifier-agent-ts";
 import type { AdapterModel } from "@paperclipai/adapter-utils";
-
-import { models as DIRECT_MODELS } from "../index.js";
 
 const CACHE_TTL_MS = 60_000;
 const LIST_TIMEOUT_MS = 15_000;
@@ -68,56 +66,44 @@ async function loadAmplifierModels({
     return cached.models;
   }
 
-  let discovered: AdapterModel[] = [];
-  try {
-    const envelope = await listAllModels({
-      env: process.env,
-      timeoutMs: LIST_TIMEOUT_MS,
-    });
+  // No try/catch wrapping listAllModels(): failures propagate to the route
+  // handler so misconfigured engines (binary missing, exit 1/2, timeout,
+  // malformed envelope) surface to the UI rather than getting silently
+  // smoothed over with a stale or fabricated list.
+  const envelope = await listAllModels({
+    env: process.env,
+    timeoutMs: LIST_TIMEOUT_MS,
+  });
 
-    // Only surface providers that returned status: "ok". Other statuses
-    // (credentials_missing, module_not_installed, error) imply the provider
-    // isn't ready — surfacing its (possibly stale, possibly empty) model
-    // list would be misleading.
-    for (const result of envelope.results) {
-      if (result.status !== "ok") continue;
-      for (const m of result.models) {
-        discovered.push({
-          id: m.id,
-          // ModelInfo.display_name is required on the wire but defensively
-          // fall back to id if a future engine version relaxes it.
-          label: m.display_name || m.id,
-        });
-      }
+  // Only surface providers that returned status: "ok". Other statuses
+  // (credentials_missing, module_not_installed, error) imply the provider
+  // isn't ready — surfacing its (empty or possibly stale) model list would
+  // mislead the user about what's actually available right now.
+  const discovered: AdapterModel[] = [];
+  for (const result of envelope.results) {
+    if (result.status !== "ok") continue;
+    for (const m of result.models) {
+      discovered.push({
+        id: m.id,
+        // ModelInfo.display_name is required on the wire; fall back to id
+        // defensively if a future engine version relaxes it.
+        label: m.display_name || m.id,
+      });
     }
-  } catch (err) {
-    // Engine-wide discovery failure (binary missing, exit 1/2, timeout,
-    // malformed envelope). Log so operators see it, then fall back to the
-    // static list so the agent-creation form keeps working.
-    const reason =
-      err instanceof ListModelsError
-        ? `exitCode=${err.exitCode} stderr=${err.stderr.slice(0, 200)}`
-        : err instanceof Error
-          ? err.message
-          : String(err);
-    // eslint-disable-next-line no-console
-    console.warn(
-      "[amplifier-local] listAllModels failed; using static fallback. " + reason,
-    );
-    discovered = [];
   }
 
-  // Merge: discovered models first (so engine-truthful identifiers and
-  // labels win), then static fallback fills in anything missing.
-  const merged = dedupeModels([...discovered, ...DIRECT_MODELS]);
-  cached = { expiresAt: Date.now() + CACHE_TTL_MS, models: merged };
-  return merged;
+  const deduped = dedupeModels(discovered);
+  // Only cache successful results. If discovery rejected above, the catch
+  // path in our caller logs and reports the failure; we leave `cached`
+  // untouched so the next call retries against the live engine.
+  cached = { expiresAt: Date.now() + CACHE_TTL_MS, models: deduped };
+  return deduped;
 }
 
 /**
  * List available models, using a short TTL cache. Called by paperclip's
  * `/agents/<id>/models` route handler and the agent-creation form's initial
- * load. Safe to call frequently; the cache absorbs the cost.
+ * load. Rejects on engine discovery failure — there is no static fallback.
  */
 export async function listAmplifierLocalModels(): Promise<AdapterModel[]> {
   return loadAmplifierModels();

@@ -46,7 +46,6 @@ import {
 } from "@paperclipai/adapter-amplifier-local/server";
 import {
   agentConfigurationDoc as amplifierAgentConfigurationDoc,
-  models as amplifierModels,
 } from "@paperclipai/adapter-amplifier-local";
 import {
   execute as codexExecute,
@@ -308,17 +307,13 @@ const amplifierLocalAdapter: ServerAdapterModule = {
   listSkills: listAmplifierSkills,
   syncSkills: syncAmplifierSkills,
   sessionCodec: amplifierSessionCodec,
-  // Static fallback list — still wired so a cold path (engine binary missing,
-  // discovery failed before cache populated, model-selection form rendering
-  // before listModels resolves) shows a usable dropdown. The static list is
-  // also merged with discovered models inside listAmplifierModelsDynamic so
-  // discovered entries override and extend rather than replace.
-  models: amplifierModels,
-  // Dynamic discovery via amplifier-agent's `models list` aggregate command
-  // (see wrappers/typescript/src/list-models.ts:listAllModels in
-  // amplifier-agent main). One subprocess spawn queries every known
-  // provider in parallel; the adapter caches the result with a 60s TTL.
-  // refreshModels bypasses the cache for explicit user-initiated refresh.
+  // Model list is fully dynamic: engine-side discovery via amplifier-agent's
+  // `models list` aggregate command (one subprocess spawn, 60s TTL cache).
+  // No static `models` field — earlier revisions merged a hardcoded fallback
+  // here, which masked engine misconfiguration by showing a "usable" dropdown
+  // even when no provider could actually authenticate. The engine is now the
+  // single source of truth; if discovery fails, the UI sees the error.
+  // See packages/adapters/amplifier-local/src/server/models.ts for details.
   listModels: listAmplifierModelsDynamic,
   refreshModels: refreshAmplifierModelsDynamic,
   supportsLocalAgentJwt: true,
