@@ -702,7 +702,12 @@ export async function execute(
           allowlist: [...DEFAULT_ALLOWLIST, ...Object.keys(env)],
           extra: env,
         },
-        providerOverride: provider,
+        // providerOverride was removed from SpawnAgentParams in the same wave
+        // that removed modelOverride/effortOverride (host_config is now the
+        // single source of truth for provider selection). Paperclip already
+        // writes provider.module + provider.config.model into host_config.json
+        // via writeHostConfigAtomic above, which the engine reads via the
+        // --config flag we still pass below — no argv-level override needed.
         approval: { mode: "yes" },
         // Request NDJSON wire-event emission on stderr so wrapper-ts's
         // parseNdjsonStream → display.onEvent path delivers typed

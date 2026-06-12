@@ -13,6 +13,11 @@ export {
   syncAmplifierLocalSkills,
 } from "./skills.js";
 export {
+  listAmplifierLocalModels,
+  refreshAmplifierLocalModels,
+  resetAmplifierLocalModelsCacheForTests,
+} from "./models.js";
+export {
   asAmplifierErrorView,
   describeAmplifierError,
   isAmplifierApprovalUnconfiguredError,
