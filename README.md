@@ -23,7 +23,7 @@ This README covers **installing and running** paperclip with `amplifier-agent`. 
   # ensure ~/.local/bin is on PATH; verify:
   amplifier-agent version --json   # → {"version":"0.6.0","protocolVersion":"0.3.0"}
   ```
-- An LLM provider API key for the model you'll use (e.g. `ANTHROPIC_API_KEY` for Claude, `OPENAI_API_KEY` for GPT). The key is set **per-agent** in the paperclip UI, or exported in the host shell — see [Configure your agent's API key](#configure-your-agents-api-key).
+- An LLM provider API key for the model you'll use. Set it once via `amplifier-agent auth set <provider> <key>` (persists to `~/.amplifier-agent/credentials.json`, picked up automatically by every `amplifier_local` agent), or **per-agent** in the paperclip UI — see [Configure your agent's API key](#configure-your-agents-api-key).
 
 ## Quick start
 
@@ -32,22 +32,22 @@ git clone https://github.com/microsoft/amplifier-app-paperclip
 cd amplifier-app-paperclip
 pnpm install
 
-# Optional but recommended: export provider API keys in this shell
-# BEFORE starting the server. Every `amplifier_local` agent you create
-# later will inherit these automatically (whitelisted vars only —
-# see "Configure your agent's API key" below for the full list).
-export ANTHROPIC_API_KEY=sk-ant-...     # for claude-* models
-export OPENAI_API_KEY=sk-...            # for gpt-* / o3-* / o4-* models
-# Add only the keys for providers you actually use.
+# Optional but recommended: register provider credentials with amplifier-agent
+# BEFORE starting the server. amplifier-agent auto-enables every provider
+# whose credentials resolve (this persists to ~/.amplifier-agent/credentials.json,
+# so it survives across shells/reboots — no re-exporting needed).
+amplifier-agent auth set anthropic sk-ant-...   # for claude-* models
+amplifier-agent auth set openai sk-...          # for gpt-* / o3-* / o4-* models
+# Add only the providers you actually use.
 
 pnpm paperclipai onboard --yes   # one-time: creates board user + Agent JWT secret, then runs the server
 ```
 
-`onboard --yes` combines initial setup and `pnpm dev`. For subsequent runs (after the first onboarding) use `pnpm dev` directly — but remember to re-export the keys in that shell, otherwise the server starts without them.
+`onboard --yes` combines initial setup and `pnpm dev`. For subsequent runs (after the first onboarding) use `pnpm dev` directly — credentials set via `amplifier-agent auth set` persist across runs automatically.
 
 Open **http://127.0.0.1:3100** — look for `amplifier_local` in the adapter type dropdown when creating or editing an agent. (The server binds to `127.0.0.1` only; if you need to reach it from another machine, set up an SSH tunnel or reverse proxy.)
 
-If you skipped the `export` step or want different keys per agent, set them per-agent via the UI instead — see [Configure your agent's API key](#configure-your-agents-api-key) below. Both paths work; per-agent values override the host-shell values on collision.
+If you skipped the `auth set` step or want different keys per agent, set them per-agent via the UI instead — see [Configure your agent's API key](#configure-your-agents-api-key) below. Both paths work; per-agent `config.env` always overrides amplifier-agent's own credential resolution on collision.
 
 ## Verifying it works
 
@@ -82,44 +82,43 @@ If something is off, see [`docs/adapters/amplifier-local/troubleshooting.md`](do
 
 ## Configure your agent's API key
 
-The `amplifier_local` adapter reads provider API keys from two sources, in this precedence:
+The `amplifier_local` adapter itself does not manage provider credentials — that's amplifier-agent's job. `amplifier-agent serve` / `run` auto-enable every provider whose credentials resolve, from either of these sources (amplifier-agent's own precedence):
 
-1. **Per-agent** — set in the agent's edit form (Agent Environment Run Variables). Wins on collision.
-2. **Host shell of the paperclip server** — exported in the shell where `pnpm dev` runs. Whitelisted to known provider keys only. Each inherited key emits a `[paperclip] Inherited <KEY> from host environment` line in the run log for provenance.
+1. **Per-agent** — set in the agent's edit form (Agent Environment Run Variables), passed through to the subprocess env. Wins on collision with amplifier-agent's own credential resolution.
+2. **amplifier-agent's credential store** — environment variable (e.g. `ANTHROPIC_API_KEY`) in the shell that runs paperclip, or `~/.amplifier-agent/credentials.json` written by `amplifier-agent auth set <provider> <key>`. Shared across every `amplifier_local` agent on the host.
 
-Pick whichever fits. Host-shell inheritance is the common case for single-user dev. Per-agent is required for multi-tenant deployments where each agent needs distinct credentials.
+Pick whichever fits. `amplifier-agent auth set` is the common case for single-user dev (persists across shells/reboots, unlike a plain `export`). Per-agent `config.env` is required for multi-tenant deployments where each agent needs distinct credentials.
 
-The whitelist (the only env vars the adapter inherits from the paperclip server's shell):
+Run `amplifier-agent providers list --json` at any time to see which providers currently resolve and from what source, without exposing the credential material itself. The adapter's **Test environment** diagnostic surfaces the same information for the agent's model's derived provider:
 
-| Adapter model | Required key |
+| Model prefix | Derived provider |
 |---|---|
-| `claude-*` (Anthropic) | `ANTHROPIC_API_KEY` |
-| `gpt-*`, `o3-*`, `o4-*` (OpenAI) | `OPENAI_API_KEY` |
-| `gpt-*` via Azure | `AZURE_OPENAI_API_KEY` (+ `AZURE_OPENAI_ENDPOINT`) |
-| `gemini-*` (Gemini) | `GEMINI_API_KEY` |
-| `llama*`, `qwen*`, etc. (Ollama) | `OLLAMA_HOST` (e.g. `http://localhost:11434`) |
+| `claude-*` | `anthropic` |
+| `gpt-*`, `o1-*`–`o9-*`, `text-davinci-*` | `openai` |
+| `llama*`, `mistral*`, `qwen*`, `deepseek*`, `phi*` | `ollama` |
+| anything else | `anthropic` (default) |
 
-Any other env vars in the paperclip shell (e.g. `DATABASE_URL`, `AWS_SECRET_ACCESS_KEY`, `PATH`) are **never** passed through to agents.
+Set `config.provider` explicitly (e.g. `"azure-openai"`) to override the derived provider — useful when a model name is ambiguous (e.g. `gpt-*` served via Azure instead of OpenAI directly).
 
-### Option A — Host shell (simplest, single-user dev)
+### Option A — amplifier-agent auth set (simplest, single-user dev)
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
+amplifier-agent auth set anthropic sk-ant-...
 pnpm dev
 ```
 
-Every `amplifier_local` agent automatically picks up the key. Confirm it landed by checking a run log for `[paperclip] Inherited ANTHROPIC_API_KEY from host environment`.
+Every `amplifier_local` agent automatically picks up the key. Confirm it landed by running `amplifier-agent providers list --json` (or clicking **Test environment** on the agent) and checking for `"resolvable": true`.
 
 ### Option B — Per-agent (multi-tenant, or when you need distinct keys per agent)
 
 1. Create or open an agent that uses `amplifier_local`.
 2. In the agent's edit form, find the **Agent Environment Run Variables** section.
-3. Add a key-value pair using the env var from the table above. Choose the `plain` value type, or use `secret_ref` if you have a secret store wired.
-4. Save the agent. Then click **Test environment** — you should see `amplifier_provider_key_present_config` (info, green) in the diagnostics.
+3. Add a key-value pair for the provider's API key (e.g. `ANTHROPIC_API_KEY`). Choose the `plain` value type, or use `secret_ref` if you have a secret store wired.
+4. Save the agent. Then click **Test environment** — you should see `amplifier_provider_key_present` (info, green) in the diagnostics.
 
-Per-agent values always override host-shell inheritance. Setting an explicit empty string (e.g. `ANTHROPIC_API_KEY: ""`) is a "no key for this agent" signal that also blocks host-shell inheritance.
+Per-agent values always override amplifier-agent's own credential resolution on collision.
 
-If no key is available from either source, the first heartbeat fails with `provider_init_failed` or `provider_not_configured`. Fix by setting the env var via Option A or B and re-triggering the heartbeat.
+If no key is available from either source, the first heartbeat fails with `provider_init_failed` or `provider_not_configured`. Fix by setting the credential via Option A or B and re-triggering the heartbeat.
 
 ## Updating
 

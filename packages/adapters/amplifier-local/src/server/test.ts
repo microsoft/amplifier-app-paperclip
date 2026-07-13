@@ -6,7 +6,10 @@
  *   1. cwd exists and is a directory
  *   2. The configured command (default "amplifier-agent") is resolvable on PATH
  *   3. `amplifier-agent doctor` runs cleanly (and includes the G4 mcp-importable check)
- *   4. The configured provider env var (e.g. ANTHROPIC_API_KEY) is present
+ *   4. Credentials for the model's derived provider resolve, per
+ *      `amplifier-agent providers list --json` (the CLI-visible view of the
+ *      same converged credential resolver `run`/`serve` use — env var OR
+ *      `~/.amplifier-agent/credentials.json` via `amplifier-agent auth set`)
  *
  * Status mapping:
  *   - any `error` check  → "fail" (blocks the agent from running)
@@ -29,6 +32,7 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 
 import { DEFAULT_AMPLIFIER_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
+import { resolveProvider } from "./execute.js";
 
 const execFile = promisify(_execFile);
 
@@ -163,53 +167,80 @@ async function checkDoctor(
   }
 }
 
-function checkProviderApiKey(
-  envConfig: Record<string, unknown>,
-  hostEnv: NodeJS.ProcessEnv,
+/**
+ * Row shape from `amplifier-agent providers list --json` (schema_version 1).
+ * We only read the fields we display; anything else on the row is ignored.
+ */
+interface ProvidersListRow {
+  name?: unknown;
+  resolvable?: unknown;
+  source?: unknown;
+  env_var?: unknown;
+}
+
+/**
+ * Ask amplifier-agent itself whether the agent's derived provider has
+ * resolvable credentials (env var, or `~/.amplifier-agent/credentials.json`
+ * via `amplifier-agent auth set`). This is the same converged resolver that
+ * `run` / `serve` auto-enable use — the adapter no longer inspects env vars
+ * itself, since amplifier-agent post-Phase-1 is the single source of truth
+ * for "does this provider have credentials".
+ */
+async function checkProviderResolvable(
+  command: string,
+  cwd: string,
+  env: Record<string, string>,
   model: string,
-): AdapterEnvironmentCheck {
-  const expectedEnvVar = providerEnvVarForModel(model);
-  const fromConfig = asString(envConfig[expectedEnvVar], "");
-  const fromHost = asString(hostEnv[expectedEnvVar], "");
-  if (fromConfig.length > 0) {
+  explicitProvider: string,
+): Promise<AdapterEnvironmentCheck> {
+  const provider = resolveProvider(explicitProvider, model);
+  if (command !== "amplifier-agent") {
     return info(
-      "amplifier_provider_key_present_config",
-      `${expectedEnvVar}: present in adapter env config`,
+      "amplifier_provider_check_skipped_custom_command",
+      `provider credential check skipped (custom command: ${command})`,
+      "Set command to 'amplifier-agent' to run the built-in provider check.",
     );
   }
-  if (fromHost.length > 0) {
+  let rows: ProvidersListRow[];
+  try {
+    const { stdout } = await execFile(command, ["providers", "list", "--json"], {
+      cwd: cwd || process.cwd(),
+      env,
+      timeout: DOCTOR_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+    const parsed: unknown = JSON.parse(stdout);
+    const list = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>).providers : undefined;
+    rows = Array.isArray(list) ? (list as ProvidersListRow[]) : [];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return warn(
+      "amplifier_provider_check_indeterminate",
+      `Could not run "amplifier-agent providers list --json": ${msg}`,
+      "Run `amplifier-agent providers list` manually, or upgrade amplifier-agent if this command is unavailable.",
+    );
+  }
+  const row = rows.find((r) => asString(r.name, "") === provider);
+  if (!row) {
+    return warn(
+      "amplifier_provider_unknown",
+      `amplifier-agent does not report a "${provider}" provider`,
+      "Check the model's derived provider against `amplifier-agent providers list`.",
+    );
+  }
+  const envVar = asString(row.env_var, "");
+  if (row.resolvable === true) {
+    const source = asString(row.source, "unknown");
     return info(
-      "amplifier_provider_key_present_host",
-      `${expectedEnvVar}: present in host environment`,
+      "amplifier_provider_key_present",
+      `${provider}: credentials resolvable (source: ${source}${envVar ? `, ${envVar}` : ""})`,
     );
   }
   return warn(
     "amplifier_provider_key_missing",
-    `${expectedEnvVar} is not set in adapter env or host environment`,
-    `Set ${expectedEnvVar} in the agent's env config to allow amplifier-agent to call the provider.`,
+    `${provider}: credentials not resolvable${envVar ? ` (checked ${envVar})` : ""}`,
+    `Run \`amplifier-agent auth set ${provider} <key>\` on the host, or set ${envVar || "the provider's API key"} in the agent's env config.`,
   );
-}
-
-function providerEnvVarForModel(model: string): string {
-  const m = model.trim().toLowerCase();
-  if (m.startsWith("claude-")) return "ANTHROPIC_API_KEY";
-  if (
-    m.startsWith("gpt-") ||
-    /^o[1-9]/i.test(m) ||
-    m.startsWith("text-davinci-")
-  ) {
-    return "OPENAI_API_KEY";
-  }
-  if (
-    m.startsWith("llama") ||
-    m.startsWith("mistral") ||
-    m.startsWith("qwen") ||
-    m.startsWith("deepseek") ||
-    m.startsWith("phi")
-  ) {
-    return "OLLAMA_HOST";
-  }
-  return "ANTHROPIC_API_KEY";
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +254,7 @@ export async function testEnvironment(
   const command = asString(config.command, "amplifier-agent");
   const cwd = asString(config.cwd, "");
   const model = asString(config.model, DEFAULT_AMPLIFIER_LOCAL_MODEL);
+  const explicitProvider = asString(config.provider, "");
   const envConfig = parseObject(config.env);
 
   // Build the env for command resolution. Use the host env as the base (so
@@ -246,9 +278,8 @@ export async function testEnvironment(
   );
   if (commandResolvable) {
     checks.push(...(await checkDoctor(command, cwd, env)));
+    checks.push(await checkProviderResolvable(command, cwd, env, model, explicitProvider));
   }
-
-  checks.push(checkProviderApiKey(envConfig, process.env, model));
 
   return {
     adapterType: ctx.adapterType,

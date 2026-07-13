@@ -134,7 +134,7 @@ type RunAttemptResult = RunAttemptOk | RunAttemptSpawnError;
  *   gpt-*, o1-*, o3-*, o4-*           → openai
  *   llama*, mistral*, qwen*, deepseek*, phi* → ollama
  */
-function deriveAmplifierProvider(model: string): AmplifierLocalProvider {
+export function deriveAmplifierProvider(model: string): AmplifierLocalProvider {
   const trimmed = model.trim().toLowerCase();
   if (!trimmed) return "anthropic";
   if (trimmed.startsWith("claude-")) return "anthropic";
@@ -160,7 +160,7 @@ function deriveAmplifierProvider(model: string): AmplifierLocalProvider {
   return "anthropic";
 }
 
-function resolveProvider(
+export function resolveProvider(
   configProvider: string,
   model: string,
 ): AmplifierLocalProvider {
@@ -276,68 +276,24 @@ function parseRuntimeSessionParams(raw: unknown): RuntimeSessionParamsView {
 }
 
 // ---------------------------------------------------------------------------
-// User env layering (config.env + provider API keys)
+// User env layering (config.env)
 // ---------------------------------------------------------------------------
 
 /**
- * Provider env vars that amplifier-agent looks up when the host_config /
- * argv don't override. Listed here so we can warn / pass through the
- * operator's `config.env` values without enforcing a specific shape.
+ * amplifier-agent resolves its own provider credentials (env var, or
+ * `~/.amplifier-agent/credentials.json` via `amplifier-agent auth set`)
+ * independently of what this adapter passes on the subprocess env -- see
+ * amplifier-agent's converged credential resolver (auto-enables any
+ * provider whose credentials resolve when no explicit provider block is
+ * supplied). This adapter no longer whitelists/forwards host-shell
+ * provider env vars into the subprocess: the recommended way to give an
+ * amplifier-local agent credentials without per-agent `config.env` is
+ * `amplifier-agent auth set <provider> <key>` on the host running
+ * paperclip (persists to `~/.amplifier-agent/credentials.json`, which
+ * amplifier-agent reads itself -- no paperclip-side plumbing needed).
+ * Per-agent `config.env` (layered below) remains the explicit,
+ * multi-tenant-safe way to set distinct credentials per agent.
  */
-/**
- * Whitelist of provider-related env vars that the adapter is willing to
- * inherit from the paperclip server's host environment when the per-agent
- * `config.env` does not set them. Exported for testability.
- *
- * Inheritance behavior matches `claude-local` and `codex-local`, which
- * spread `process.env` into the spawned subprocess. The choice to limit
- * inheritance to a whitelist (rather than inherit the entire host env)
- * is a security stance: an operator who accidentally exports
- * `DATABASE_URL` or similar to the paperclip-running shell should NOT
- * silently leak it to every amplifier-local agent.
- *
- * Per-agent `config.env` always wins on collision (see
- * `inheritProviderKeysFromHostEnv` ordering vs `layerUserEnv` below).
- */
-export const PROVIDER_ENV_VARS = new Set([
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "AZURE_OPENAI_API_KEY",
-  "AZURE_OPENAI_ENDPOINT",
-  "GEMINI_API_KEY",
-  "OLLAMA_HOST",
-]);
-
-/**
- * Inherit provider API keys (and related vars) from the paperclip server's
- * host environment into the agent subprocess env, but only:
- *   1. for keys in `PROVIDER_ENV_VARS` (whitelist),
- *   2. when the value is a non-empty string in `hostEnv`, and
- *   3. when the per-agent `envConfig` does not already set them.
- *
- * Each inherited key is logged via `onLog` (when provided) so the operator
- * can see provenance in the run log:
- *     [paperclip] Inherited ANTHROPIC_API_KEY from host environment
- *
- * Exported for unit testing.
- */
-export async function inheritProviderKeysFromHostEnv(
-  env: Record<string, string>,
-  envConfig: Record<string, unknown>,
-  hostEnv: NodeJS.ProcessEnv,
-  onLog?: (channel: "stdout" | "stderr", chunk: string) => Promise<void> | void,
-): Promise<void> {
-  for (const key of PROVIDER_ENV_VARS) {
-    const fromHost = hostEnv[key];
-    if (typeof fromHost !== "string" || fromHost.length === 0) continue;
-    if (key in envConfig) continue;
-    env[key] = fromHost;
-    if (onLog) {
-      await onLog("stdout", `[paperclip] Inherited ${key} from host environment\n`);
-    }
-  }
-}
-
 function layerUserEnv(
   env: Record<string, string>,
   userEnv: Record<string, unknown>,
@@ -548,15 +504,12 @@ export async function execute(
     env.PAPERCLIP_API_KEY = authToken;
   }
 
-  // Inherit provider API keys from the paperclip server's host environment
-  // when the per-agent config.env does not set them. Whitelisted to
-  // provider-related vars (PROVIDER_ENV_VARS) to avoid leaking unrelated
-  // host env to agents. Per-agent config.env always wins on collision
-  // (applied next, by layerUserEnv).
-  await inheritProviderKeysFromHostEnv(env, envConfig, process.env, onLog);
-
   // User-supplied env overrides last. This is where provider API keys come
   // from (ANTHROPIC_API_KEY etc.) when explicitly configured per-agent.
+  // Credentials NOT set here are amplifier-agent's own concern: it resolves
+  // them itself (env var or `~/.amplifier-agent/credentials.json`) and
+  // auto-enables any provider whose credentials resolve -- this adapter no
+  // longer forwards host-shell provider env vars into the subprocess.
   layerUserEnv(env, envConfig);
 
   // ---- 6. Session resume gate ----
