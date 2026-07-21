@@ -15,13 +15,13 @@ This README covers **installing and running** paperclip with `amplifier-agent`. 
 - pnpm 9+ (`npm install -g pnpm@latest`)
 - git
 - `uv` for installing the engine (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- `amplifier-agent` **>= 0.6.0**, installed *as the same user that will run paperclip*. The paperclip server invokes `amplifier-agent` per turn and inherits the user's PATH to find both `amplifier-agent` and `uv`. Installing as a different user (e.g. root) silently breaks heartbeats. Use the official installer script, which installs the latest release and primes the bundle cache so the first run is instant:
+- `amplifier-agent` **>= 0.9.1**, installed *as the same user that will run paperclip*. The paperclip server invokes `amplifier-agent` per turn and inherits the user's PATH to find both `amplifier-agent` and `uv`. Installing as a different user (e.g. root) silently breaks heartbeats. Use the official installer script, which installs the latest release and primes the bundle cache so the first run is instant:
   ```bash
   curl -fsSL https://raw.githubusercontent.com/microsoft/amplifier-agent/main/install.sh | bash
   # to pin a specific version instead of latest:
-  #   curl -fsSL https://raw.githubusercontent.com/microsoft/amplifier-agent/main/install.sh | bash -s -- --tag v0.6.0
+  #   curl -fsSL https://raw.githubusercontent.com/microsoft/amplifier-agent/main/install.sh | bash -s -- --tag v0.9.1
   # ensure ~/.local/bin is on PATH; verify:
-  amplifier-agent version --json   # → {"version":"0.6.0","protocolVersion":"0.3.0"}
+  amplifier-agent version --json   # → {"version":"0.9.1","protocolVersion":"0.3.0"}
   ```
 - An LLM provider API key for the model you'll use. Set it once via `amplifier-agent auth set <provider> <key>` (persists to `~/.amplifier-agent/credentials.json`, picked up automatically by every `amplifier_local` agent), or **per-agent** in the paperclip UI — see [Configure your agent's API key](#configure-your-agents-api-key).
 
@@ -64,7 +64,7 @@ curl -s http://127.0.0.1:3100/api/adapters \
 
 # 3. Engine version (per-user, must match the user running paperclip)
 amplifier-agent version --json
-# expect: {"version":"0.6.0","protocolVersion":"0.3.0"}
+# expect: {"version":"0.9.1","protocolVersion":"0.3.0"}
 ```
 
 **Note:** `/api/health` returns `authReady: true` even *before* onboarding has run, so health alone is not a sufficient check. The dev-server console banner shows `Agent JWT: set` once onboarding has completed — that's the authoritative signal. If you see `Agent JWT: missing`, re-run `pnpm paperclipai onboard --yes`.

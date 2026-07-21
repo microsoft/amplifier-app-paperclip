@@ -16,5 +16,5 @@ For how the adapter is wired in, see [`integration.md`](./integration.md).
 | `provider_init_failed` on the first heartbeat | API key missing from the agent's env vars | Add the right key to **Agent Environment Run Variables** (see the README's "Configure your agent's API key") |
 | `amplifier-agent: command not found` when paperclip launches a turn | Not on PATH for the running user | Install via `curl -fsSL https://raw.githubusercontent.com/microsoft/amplifier-agent/main/install.sh \| bash`; ensure `~/.local/bin` is on `PATH` |
 | First heartbeat is slow (~30s) | Engine materializing skills and downloading provider modules into `~/.amplifier-agent/cache/` (unified storage root introduced alongside the `0.6.0` minimum; older versions used XDG paths under `~/.cache/amplifier-agent/` and `~/.local/state/amplifier-agent/`) | One-time cost. Subsequent runs are fast. |
-| Wrong model output / token count zeros | Engine version mismatch | Confirm `amplifier-agent --version` reports >= 0.6.0 |
+| Wrong model output / token count zeros | Engine version mismatch | Confirm `amplifier-agent --version` reports >= 0.9.1 |
 | Server is up but I can't reach it from another machine | Server binds `127.0.0.1` only by design | Use an SSH tunnel (`ssh -L 3100:127.0.0.1:3100 <host>`) or set up a reverse proxy |
