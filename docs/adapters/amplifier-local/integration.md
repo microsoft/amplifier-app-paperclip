@@ -38,7 +38,7 @@ git diff $(cat UPSTREAM_PIN)..HEAD
 | Engine version | Status |
 |---|---|
 | `< 0.6.0` | **Below minimum — not supported.** The `amplifier_local` adapter depends on engine features that arrived in the `0.6.0` release wave: `--display ndjson` for structured wire events (cost, model, cache metrics on stderr), `--workspace` for per-agent session isolation, and the `models list` aggregate subcommand for dynamic provider discovery. Older versions also still accepted `--provider`/`--model`/`--effort` on `run`, which the adapter no longer emits — running them together produces `No such option '--provider'`. |
-| `>= 0.6.0` | **Required.** Includes all of `--display ndjson`, `--workspace`, `models list` (aggregate mode via `listAllModels()`), the unified `~/.amplifier-agent/` storage root, and the `host_config.provider.{module,config}` single-source-of-truth for provider/model selection. Wrapper-ts `0.7.0` (the npm dep) matches this engine. |
+| `>= 0.9.1` | **Required.** Includes all of `--display ndjson`, `--workspace`, `models list` (aggregate mode via `listAllModels()`), the unified `~/.amplifier-agent/` storage root, and the `host_config.provider.{module,config}` single-source-of-truth for provider/model selection. Wrapper-ts `0.7.0` matches this engine. Resolves provider credentials from credentials.json at startup. |
 
 Install (or upgrade to) the required version:
 
@@ -46,7 +46,7 @@ Install (or upgrade to) the required version:
 # fresh install — latest release:
 curl -fsSL https://raw.githubusercontent.com/microsoft/amplifier-agent/main/install.sh | bash
 # pin a specific version:
-curl -fsSL https://raw.githubusercontent.com/microsoft/amplifier-agent/main/install.sh | bash -s -- --tag v0.6.0
+curl -fsSL https://raw.githubusercontent.com/microsoft/amplifier-agent/main/install.sh | bash -s -- --tag v0.9.1
 # already installed — upgrade in place:
 amplifier-agent update
 ```
